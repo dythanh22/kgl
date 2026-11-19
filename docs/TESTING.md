@@ -1,0 +1,147 @@
+# Tự kiểm thử kgl từ máy cá nhân đến GPU Kaggle
+
+**Câu hỏi nghiệm thu:** Từ máy cá nhân, bạn có nhận được câu trả lời của đúng model trên GPU Kaggle, nhận đủ stream, và gửi được yêu cầu tiếp theo sau gián đoạn không?
+
+**Mốc đối chiếu ngày 19/11/2026.** Trên Python 3.14.4, 27/27 test local qua trong 17,753 giây, mã thoát 0. Có `ResourceWarning` về tài nguyên chưa đóng trong lúc kiểm thử. Suite dùng Jupyter giả trên localhost, thực thi Python trong subprocess, kiểm tra cả TLS và backend echo. Lần rà soát này chưa có URL hay session Kaggle để đo GPU thực tế.
+
+Các lệnh dưới đây dùng Bash trên Linux. Chạy từng khối theo thứ tự ở **terminal A trên máy cá nhân**. Chỉ bước HTTP cần thêm terminal B. Dùng notebook mới dành riêng cho phép thử vì các snippet quản trị hiện có thể ghi đè biến Python trong kernel. Nếu dừng ở bất kỳ bước nào, thực hiện bước 8 để trả tài nguyên.
+
+## 1. Cài đặt và lập mốc local
+
+Mở terminal tại thư mục dự án chứa đủ các đường dẫn bên dưới. Nếu thiếu, lấy bản source đầy đủ trước khi cài. Tại thời điểm rà soát, commit HEAD chỉ chứa README. Chuẩn bị Python ≥ 3.10 có venv và pip, curl, cùng quyền mở cổng localhost cho test. pip có thể cần Internet để lấy build dependency.
+
+```bash
+ls pyproject.toml src/kgl/cli.py tests/fake_jupyter.py
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
+kgl --version
+set -o pipefail
+RUN=$(mktemp -d "$HOME/kgl-test.XXXXXX")
+export KGL_HOME="$RUN/session"
+export KGL_WORKDIR=/kaggle/working KGL_CHUNK_KB=256
+printf 'Thu muc ket qua: %s\n' "$RUN"
+python -V
+PYTHONPATH=src python -m unittest discover -s tests -t . -v 2>&1 | tee "$RUN/local-tests.log"
+```
+
+**Đạt** khi thấy `Ran 27 tests` và `OK` với source hiện tại. Nếu nhiều test cùng lỗi mở socket localhost, kiểm tra quyền mạng của môi trường chạy. Nếu máy local có NVIDIA GPU và riêng test `test_doctor_with_echo_backend` lỗi vì số bước FAIL là 0, kiểm tra assertion trong `tests/test_cli.py`: test hiện kỳ vọng máy chạy test thiếu GPU. Ghi nhận lỗi giả định môi trường của suite. Giữ terminal A mở để dùng tiếp các biến. Thư mục `session` chứa URL có quyền truy cập notebook, chỉ chia sẻ các báo cáo đã xem lại.
+
+## 2. Lấy URL và chứng minh kết nối
+
+Tạo notebook Python trong tài khoản Kaggle của bạn, chọn accelerator GPU và khởi động session. Bật Internet nếu tải model từ Hugging Face, hoặc gắn sẵn thư mục model có tokenizer và weights. Trong notebook chọn **Run → Kaggle Jupyter Server → Manually Connect → VS Code Compatible URL**. Đây là luồng lấy URL mà Kaggle mô tả cho trình soạn thảo bên ngoài. Khả năng dùng URL đó với bản kgl của bạn được kiểm tra ngay bên dưới. [Tài liệu Kaggle](https://www.kaggle.com/docs/notebooks)
+
+```bash
+kgl auth
+read -rsp 'Dan VS Code Compatible URL, roi nhan Enter: ' KGL_TEST_URL
+printf '\n'
+printf '%s\n' "$KGL_TEST_URL" | kgl connect --proxy-url -
+unset KGL_TEST_URL
+kgl exec --timeout 30 'print(1 + 1)'
+kgl status --json > "$RUN/status.json"
+```
+
+**Đạt** khi connect hoàn tất, exec trả đúng `2` và trường `connection` trong JSON là `ok`. `auth` chỉ liệt kê credential hiện có. Dòng `connected` xuất hiện trước khi probe WebSocket hoàn tất. Nếu có nhiều kernel, chọn kernel notebook bằng `--kernel-id` khi connect. Với 401/403, lấy URL mới từ phiên còn chạy. Với 404, kiểm tra loại URL. Thử cùng URL trong VS Code để phân biệt lỗi phiên với lỗi xử lý URL của kgl. Nếu VS Code chạy cell được nhưng kgl lỗi, ghi mã HTTP và giai đoạn REST/WS/exec rồi dừng thử model.
+
+## 3. Kiểm tra thực thi, trạng thái kernel và truyền file
+
+```bash
+kgl exec --timeout 30 'kgl_test_value = 41'
+kgl exec --timeout 30 'print(kgl_test_value + 1)'
+kgl exec --timeout 30 <<'PY'
+import time
+for i in range(3):
+    print(i, flush=True)
+    time.sleep(1)
+PY
+kgl exec 'raise ValueError("kgl-test")'
+echo "Python exit=$?"     # kỳ vọng 4
+kgl exec --shell 'exit 7'
+echo "Shell exit=$?"      # kỳ vọng 7
+python -c 'import os,sys; open(sys.argv[1],"wb").write(os.urandom(700000))' "$RUN/input.bin"
+REMOTE_FILE="$(basename "$RUN")/input.bin"
+kgl upload "$RUN/input.bin" "$REMOTE_FILE"
+kgl download "$REMOTE_FILE" "$RUN/back.bin"
+sha256sum "$RUN/input.bin" "$RUN/back.bin"
+cmp "$RUN/input.bin" "$RUN/back.bin" && echo 'File PASS'
+```
+
+**Đạt** khi biến tồn tại qua hai lần exec (kết quả 42), thấy 0, 1, 2 hiện dần, hai mã lỗi đúng và file qua nhiều chunk vẫn khớp từng byte. Để kiểm tra riêng lỗi ghi đè biến đã phát hiện, trên notebook thử nghiệm chạy `kgl exec 'info = "kgl-sentinel"'`, rồi `kgl status` và `kgl exec 'print(info == "kgl-sentinel")'`. Ghi FAIL cho tính toàn vẹn namespace nếu kết quả là `False`.
+
+## 4. Tách kiểm tra đường truyền khỏi kiểm tra GPU
+
+```bash
+kgl doctor --backend echo -n 3 --report "$RUN/echo.json"
+kgl exec --shell 'nvidia-smi'
+kgl exec --timeout 90 <<'PY' | tee "$RUN/cuda.txt"
+import sys, torch, transformers
+print(sys.version, "torch", torch.__version__, "transformers", transformers.__version__)
+print("CUDA build", torch.version.cuda, "available", torch.cuda.is_available())
+assert torch.cuda.is_available(), "PyTorch khong thay CUDA"
+print(torch.cuda.get_device_name(0))
+PY
+```
+
+Trong `echo.json`, kiểm tra `kernel_exec`, `infer_x3`, `reconnect` và kết quả dừng server. Doctor mặc định dừng server do nó dùng, nên chạy bước này trước khi mở server model. Nếu chỉ `gpu_visible` lỗi, đường truyền vẫn có thể đạt nhưng phép thử GPU còn thiếu. Nếu thiếu torch/transformers hoặc CUDA là False, kiểm tra image, accelerator và phiên bản thư viện trong **notebook** trước khi tiếp tục.
+
+## 5. Chứng minh đúng model và tiến trình GPU
+
+```bash
+MODEL=Qwen/Qwen2.5-0.5B-Instruct
+kgl serve start --backend transformers --model "$MODEL" --dtype float16 --wait-timeout 900
+kgl serve status | tee "$RUN/model-health.json"
+kgl infer 'What is 7 plus 5? Answer briefly.' --temperature 0 --max-tokens 32 --timing
+kgl infer 'Name one planet.' --temperature 0 --max-tokens 32 --no-stream --json | tee "$RUN/model-reply.json"
+kgl exec --shell 'p=$(cat /kaggle/working/.kgl/serve.pid); ps -p "$p" -o pid,args; nvidia-smi --query-compute-apps=pid,process_name,used_gpu_memory --format=csv' | tee "$RUN/gpu-process.txt"
+```
+
+Với model gắn sẵn, đặt `MODEL` thành đường dẫn thư mục model trên VM. Trong `model-health.json` kiểm tra `state=ready`, `health.backend=transformers` và `health.model` đúng giá trị đã chọn. Kiểm tra cả hai câu trả lời có nội dung phù hợp, rồi đối chiếu PID của `serve.py` với PID trong bảng NVIDIA và VRAM đã cấp cho tiến trình. Đây là bằng chứng vận hành gián tiếp về GPU. Bản hiện tại chưa xuất device/dtype thực của trọng số. Nếu driver giấu PID, ghi **chưa xác minh device**. Nếu health trả echo hoặc model khác, đánh dấu FAIL, dừng server thử nghiệm và khởi động lại đúng model. Nếu khởi động lỗi trước khi CLI lưu server, xem log bằng `kgl exec --shell 'tail -n 50 /kaggle/working/.kgl/serve.log'`.
+
+## 6. Gọi API local từ ứng dụng
+
+Tại A chạy proxy và giữ nó ở foreground. Ví dụ dùng loopback và cấu hình khóa mặc định rỗng trong phiên thử này.
+
+```bash
+KGL_PROXY_KEY='' kgl serve proxy --listen 127.0.0.1:8001
+```
+
+Tại **terminal B trên cùng máy**, chạy cả hai request. Terminal B chỉ cần curl.
+
+```bash
+curl --fail-with-body --max-time 120 -sS http://127.0.0.1:8001/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"Name one ocean."}],"max_tokens":32,"temperature":0}'
+curl --fail-with-body --max-time 120 -NsS http://127.0.0.1:8001/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"Count from one to ten."}],"stream":true,"max_tokens":64,"temperature":0}'
+```
+
+**Đạt** khi JSON có `choices[0].message.content` và model đúng, còn SSE có các delta nội dung rồi kết thúc bằng `data: [DONE]`. Lưu kết quả hoặc ghi lại hiện tượng nếu stream thiếu/lặp. Quay về A, nhấn Ctrl-C **ở proxy** để lấy lại dấu nhắc.
+
+## 7. Đo độ bền và thử gián đoạn thực
+
+1. **Đo sau warm-up.** Sau request đầu ở bước 5, chạy lệnh bên dưới trong A khi server đúng model vẫn hoạt động. `--keep` giữ server cho phép thử kế. Ghi số thành công trên 20, latency p50/p95, TTFT p50 (thời gian đến đoạn văn bản đầu tiên). Báo cáo tổng hợp chỉ đưa các request thành công vào thống kê latency. Nếu bước inference gặp exception, ghi cả lỗi và số liệu còn thiếu.
+
+   ```bash
+   kgl doctor --backend transformers --model "$MODEL" -n 20 --keep --report "$RUN/model-20.json"
+   kgl serve status
+   ```
+
+2. **Ngắt mạng thật.** Chạy `kgl infer 'List the numbers from 1 to 200, one per line.' --temperature 0 --max-tokens 512 --timeout 60`. Khi nội dung đang hiện, ngắt mạng máy local khoảng 30 giây rồi nối lại. Ghi phần đã nhận, thời gian kết thúc và mã thoát bằng `echo $?` ngay sau lệnh. Nếu câu trả lời đã xong trước khi ngắt, ghi “chưa thử được” và lặp lại. Trường hợp stream vẫn liên tục nhờ TCP phục hồi thì chỉ xác nhận gián đoạn mạng ngắn, chưa chứng minh reconnect sau khi WS chết. Với stream thực sự bị cắt, mong đợi lỗi rõ hoặc phản hồi đầy đủ đúng một lần. Đánh FAIL nếu output lặp phần đầu, bị cụt nhưng báo thành công, hoặc treo vượt timeout và thời gian chờ của transport.
+3. **Phục hồi cùng phiên.** Chạy `kgl exec --timeout 30 'print(kgl_test_value + 1)'` và `kgl infer 'Name one fruit.' --timeout 60`. Ghi có phải connect lại thủ công hay không. `doctor` tự đóng một channel giữa hai request, nên cần ghi riêng phép thử ngắt mạng thực.
+4. **Độ bền một giờ.** Ghi giờ bắt đầu, sử dụng notebook bình thường ít nhất một giờ, rồi kiểm tra lại health và gửi một request. Ghi thời gian thực, số lỗi, lần phải kết nối hoặc nạp lại model. Nếu không thực hiện được, để mục này là “chưa thử”. Để kiểm tra phiên mới, dừng phiên cũ theo bước 8, khởi động phiên mới và lặp bước 2, 4, 5 với URL mới. Ghi thời gian khôi phục. Bản hiện tại chưa có checkpoint/resume.
+
+## 8. Dừng và kết luận
+
+Tắt proxy bằng Ctrl-C nếu nó còn chạy. Trong A chạy `kgl stop`, sau đó **dừng session từ giao diện Kaggle** và kiểm tra giao diện hiển thị trạng thái đã dừng. Nếu máy local đã mất kết nối, vẫn dừng session qua giao diện. Sau khi xóa session local, `kgl status` dự kiến trả mã 3.
+
+| Hạng mục | Điền kết quả và bằng chứng |
+|---|---|
+| Môi trường | Ngày giờ, Python local/remote, kgl, torch, transformers, GPU, model |
+| Local / kết nối / exec / file | Số test, mã lỗi nếu có, kết quả 42, stream, SHA-256, namespace |
+| Echo / model / GPU | Số request echo đạt, backend và model trong health, PID và VRAM, câu trả lời thực |
+| API / hiệu năng | HTTP JSON và SSE, số đạt trên 20, latency p50/p95, TTFT p50 |
+| Gián đoạn / một giờ / phiên mới | Cắt lúc nào, có lặp hoặc mất chữ không, mã thoát, thời gian phục hồi, thời gian quan sát |
+| Kết thúc | Session Kaggle đã dừng, vị trí các file bằng chứng |
+
+Ghi **PASS**, **FAIL** hoặc **chưa xác minh** cho từng mục. Chỉ ghi “đã chạy inference trên Kaggle GPU” khi bước 2 và 5 có đủ bằng chứng. Chỉ ghi “đạt độ tin cậy đã thử” khi có 20/20 request bình thường thành công, API trả đủ nội dung, phép thử gián đoạn và một giờ có kết quả đạt. Kết quả một phiên chỉ mô tả GPU, model và điều kiện mạng của lần đo đó.

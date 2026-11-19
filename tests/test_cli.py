@@ -1,0 +1,100 @@
+import contextlib
+import io
+import json
+import os
+import sys
+import unittest
+from unittest import mock
+
+from kgl.cli import main
+
+from .support import FakeEnvTest
+
+
+class CliTests(FakeEnvTest):
+    def setUp(self):
+        super().setUp()
+        env = {"KGL_HOME": self.home, "KGL_WORKDIR": self.workdir, "KGL_CHUNK_KB": "1"}
+        p = mock.patch.dict(os.environ, env)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def kgl(self, *argv, stdin=None):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), \
+                mock.patch.object(sys, "stdin", io.StringIO(stdin or "")):
+            rc = main(list(argv))
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_full_flow(self):
+        rc, out, err = self.kgl("status")
+        self.assertEqual(rc, 3)  # no session
+        self.assertIn("no active session", err)
+
+        rc, out, _ = self.kgl("connect", "--proxy-url", "-", stdin=self.server.url + "\n")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("connected", out)
+
+        rc, out, _ = self.kgl("exec", "print(6*7)")
+        self.assertEqual((rc, out.strip()), (0, "42"))
+        bad = os.path.join(self.tmp, "bad.py")
+        with open(bad, "w") as fh:
+            fh.write("raise RuntimeError('x')")
+        rc, out, err = self.kgl("exec", "-f", bad)
+        self.assertEqual(rc, 4)
+        self.assertIn("RuntimeError", err)
+        rc, out, _ = self.kgl("exec", stdin="print('from stdin')")
+        self.assertEqual((rc, out.strip()), (0, "from stdin"))
+        rc, out, _ = self.kgl("exec", "--shell", "echo shell-ok; exit 7")
+        self.assertEqual(rc, 7)
+        self.assertEqual(out.strip(), "shell-ok")  # marker line is hidden
+
+        f = os.path.join(self.tmp, "a.txt")
+        open(f, "w").write("hello" * 500)
+        self.assertEqual(self.kgl("upload", f, "a.txt")[0], 0)
+        back = os.path.join(self.tmp, "b.txt")
+        self.assertEqual(self.kgl("download", "a.txt", back)[0], 0)
+        self.assertEqual(open(back).read(), "hello" * 500)
+
+        port = str(19000 + os.getpid() % 500)
+        rc, out, err = self.kgl("serve", "start", "--backend", "echo", "--port", port,
+                                "--wait-timeout", "30")
+        self.assertEqual(rc, 0, err)
+        rc, out, _ = self.kgl("infer", "hi", "there", "--no-stream")
+        self.assertEqual((rc, out.strip()), (0, "echo: hi there"))
+        rc, out, _ = self.kgl("infer", "stream", "me")
+        self.assertEqual((rc, out.strip()), (0, "echo: stream me"))
+        rc, out, _ = self.kgl("infer", "j", "--json")
+        self.assertEqual(json.loads(out)["text"], "echo: j")
+
+        rc, out, _ = self.kgl("status", "--json")
+        data = json.loads(out)
+        self.assertEqual(data["connection"], "ok")
+        self.assertEqual(data["serve"]["state"], "ready")
+        self.assertNotIn("token", out)
+
+        self.assertEqual(self.kgl("stop")[0], 0)
+        self.assertEqual(self.kgl("status")[0], 3)
+
+    def test_doctor_with_echo_backend(self):
+        self.kgl("connect", "--proxy-url", self.server.url)
+        port = str(19600 + os.getpid() % 300)
+        rc, out, err = self.kgl("doctor", "-n", "5", "--port", port, "--wait-timeout", "30")
+        # step 3 (GPU) legitimately FAILs on this machine; everything else must pass.
+        lines = [l for l in out.splitlines() if l.startswith("[")]
+        failed = [l for l in lines if l.startswith("[FAIL]")]
+        self.assertEqual(len(failed), 1, out)
+        self.assertIn("gpu_visible", failed[0])
+        self.assertTrue(any("infer_x5" in l and l.startswith("[PASS]") for l in lines), out)
+        self.assertTrue(any("reconnect" in l and l.startswith("[PASS]") for l in lines), out)
+
+    def test_auth_never_prints_secrets(self):
+        with mock.patch.dict(os.environ, {"KAGGLE_API_TOKEN": "SUPERSECRET"}):
+            rc, out, _ = self.kgl("auth")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("SUPERSECRET", out)
+        self.assertIn("KAGGLE_API_TOKEN", out)
+
+
+if __name__ == "__main__":
+    unittest.main()
