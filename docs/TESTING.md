@@ -36,6 +36,8 @@ Tại thư mục dự án, dùng lệnh dưới đây sau khi đã kiểm tra se
 KGL_HOME="$HOME/kgl-test.XYuHCj/session" /home/iast-2/miniconda3/envs/myenv/bin/python -m tests.kaggle_smoke
 ```
 
+Để nghiệm thu hủy v2, đặt thêm `KGL_CONTROL_KERNEL_ID` bằng ID đầy đủ của kernel phụ đang chạy trong cùng notebook thử. Smoke test yêu cầu xác nhận worker đã nhả lượt sau khi cắt stream và yêu cầu tiếp theo thành công. Nếu không đặt, báo cáo ghi `cancellation_confirmed: null`. Trong một ca riêng, giữ một cell thử nghiệm đang chạy trên kernel notebook và xác minh lệnh hủy inference không ngắt cell đó.
+
 ## 2. Lấy URL và chứng minh kết nối
 
 Tạo notebook Python trong tài khoản Kaggle của bạn, chọn accelerator GPU và khởi động session. Bật Internet nếu tải model từ Hugging Face, hoặc gắn sẵn thư mục model có tokenizer và weights. Trong notebook chọn **Run → Kaggle Jupyter Server → Manually Connect → VS Code Compatible URL**. Đây là luồng lấy URL mà Kaggle mô tả cho trình soạn thảo bên ngoài. Khả năng dùng URL đó với bản kgl của bạn được kiểm tra ngay bên dưới. [Tài liệu Kaggle](https://www.kaggle.com/docs/notebooks)
@@ -109,7 +111,7 @@ Trong `echo.json`, kiểm tra `kernel_exec`, `infer_x3`, `reconnect` và kết q
 
 ```bash
 MODEL=Qwen/Qwen2.5-0.5B-Instruct
-kgl serve start --backend transformers --model "$MODEL" --dtype float16 --wait-timeout 900
+kgl serve start --backend transformers --require-gpu --model "$MODEL" --dtype float16 --wait-timeout 900
 kgl serve status | tee "$RUN/model-health.json"
 kgl infer 'What is 7 plus 5? Answer briefly.' --temperature 0 --max-tokens 32 --timing
 kgl infer 'Name one planet.' --temperature 0 --max-tokens 32 --no-stream --json | tee "$RUN/model-reply.json"
@@ -117,6 +119,35 @@ kgl exec --shell 'p=$(cat /kaggle/working/.kgl/serve.pid); ps -p "$p" -o pid,arg
 ```
 
 Với model gắn sẵn, đặt `MODEL` thành đường dẫn thư mục model trên VM. Trong `model-health.json` kiểm tra `state=ready`, `health.backend=transformers` và `health.model` đúng giá trị đã chọn. Kiểm tra cả hai phản hồi đúng cấu trúc và có nội dung, rồi đối chiếu PID của `serve.py` với PID trong bảng NVIDIA và VRAM đã cấp cho tiến trình. Đây là bằng chứng vận hành gián tiếp về GPU. Bản mới còn trả `health.device`, `health.dtype` và `health.instance`. Ghi giá trị thực, ví dụ `cuda:0` và `torch.float16`. Nếu health trả echo hoặc model khác, đánh dấu FAIL, dừng server thử nghiệm và khởi động lại đúng model. Nếu khởi động lỗi trước khi CLI lưu server, xem log bằng `kgl exec --shell 'tail -n 50 /kaggle/working/.kgl/serve.log'`.
+
+### Thử chia trọng số trên hai GPU
+
+Trên notebook thử riêng có hai GPU trống và Accelerate, tải checkpoint vào vùng tạm của VM đủ dung lượng, rồi đặt `MODEL` thành đường dẫn thư mục checkpoint trên VM. Trọng số Qwen2.5-14B-Instruct cần khoảng 29,54 GB. Ghi riêng thời gian tải checkpoint và thời gian từ lúc start đến trạng thái ready.
+
+```bash
+kgl serve start --require-gpu --device-map balanced --dtype float16 --model "$MODEL" --wait-timeout 900
+kgl serve status
+kgl exec --shell 'nvidia-smi --query-compute-apps=gpu_uuid,pid,used_gpu_memory --format=csv'
+```
+
+Nếu `balanced` báo offload với đúng checkpoint Qwen2.5-14B-Instruct, có thể chia 48 lớp decoder thành hai nhóm 24 lớp bằng bản đồ sau. Chạy khi hai GPU còn đủ bộ nhớ cho trọng số và phần tạo sinh.
+
+```bash
+MAP=$(python - <<'PY'
+import json
+
+placement = {"model.embed_tokens": 0, "model.rotary_emb": 0, "model.norm": 1, "lm_head": 1}
+placement.update({f"model.layers.{i}": int(i >= 24) for i in range(48)})
+print(json.dumps(placement))
+PY
+)
+kgl serve start --require-gpu --device-map "$MAP" --dtype float16 --model "$MODEL" \
+  --prefill-chunk-size 256 --wait-timeout 900
+```
+
+Tùy chọn prefill yêu cầu bản Transformers hỗ trợ `GenerationConfig.prefill_chunk_size`. Trên cấu hình đã thử, chia đoạn 256 token giúp prompt 2.088 token chạy được. Prompt khoảng 4.100 token vẫn gặp OOM. [Kết quả thử trên hai T4](PLAN_V2.md#qwen25-14b-instruct-trên-hai-tesla-t4)
+
+Đối chiếu `health.devices` với VRAM theo PID trên từng GPU. Sau warm-up, thử JSON và SSE với cùng ngân sách token, tăng độ dài prompt từng bước, rồi thử ngắt stream và kiểm tra request kế tiếp. Ghi VRAM từng GPU lúc ready và khi inference, TTFT, độ dài prompt thực từ usage và lỗi đầu tiên nếu có. Dừng instance thử và kiểm tra VRAM đã được trả lại. [Hướng dẫn chia trọng số của Accelerate](https://huggingface.co/docs/accelerate/v1.4.0/en/concept_guides/big_model_inference)
 
 ## 6. Gọi API local từ ứng dụng
 
