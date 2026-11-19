@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import posixpath
+from textwrap import indent
 from typing import Callable
 
 MARKER = "@@KGL@@"
@@ -20,7 +21,7 @@ def render(template: str, **values: object) -> str:
     out = template
     for k, v in values.items():
         out = out.replace(f"__{k}__", repr(v))
-    return PRELUDE + out
+    return f"exec({(PRELUDE + out)!r}, {{}})"
 
 
 class MarkerParser:
@@ -149,29 +150,62 @@ p.wait()
 sys.stdout.write("\\n"); _emit({"rc": p.returncode})
 '''
 
-SERVE_START = '''
-import os, sys, subprocess
-d = __DIR__
-os.makedirs(d, exist_ok=True)
-pidf, logf = d + "/serve.pid", d + "/serve.log"
-running = None
-if os.path.exists(pidf):
+_PROCESS = '''
+import json, os, signal, subprocess, sys, time, uuid
+from pathlib import Path
+import fcntl
+d = Path(__DIR__)
+d.mkdir(parents=True, exist_ok=True)
+pidf, metadata = d / "serve.pid", d / "serve.json"
+
+def inspect_process():
+    if not pidf.exists():
+        return None
+    pid = int(pidf.read_text())
+    proc = Path("/proc") / str(pid)
     try:
-        pid = int(open(pidf).read().strip()); os.kill(pid, 0)
-        state = open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()[0]
-        running = pid if state != "Z" else None
-    except Exception:
-        running = None
+        fields = (proc / "stat").read_text().rsplit(")", 1)[1].split()
+        if fields[0] == "Z":
+            return None
+        argv = (proc / "cmdline").read_bytes().decode().split(chr(0))
+        if len(argv) < 2 or argv[1] != str(d / "serve.py") or os.getpgid(pid) != pid:
+            raise RuntimeError("stale PID belongs to another process")
+        saved = json.loads(metadata.read_text()) if metadata.exists() else {}
+        if saved and (saved["pid"] != pid or saved["start_ticks"] != fields[19]):
+            raise RuntimeError("server PID identity changed")
+        return pid, argv[2:-1], saved
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+'''
+
+def _locked_process_operation(operation: str) -> str:
+    return (_PROCESS + 'with (d / "serve.lock").open("a") as lock:\n'
+            + '    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)\n'
+            + indent(operation, "    "))
+
+
+SERVE_START = _locked_process_operation('''
+running = inspect_process()
+args = __ARGS__
 if running:
-    _emit({"already_running": True, "pid": running})
+    pid, argv, saved = running
+    if not saved:
+        raise RuntimeError("legacy server detected; stop it before upgrading")
+    if args and argv != args + ["--instance", saved["instance"]]:
+        raise RuntimeError("running server configuration conflicts with requested configuration")
+    _emit(dict(saved, already_running=True))
 else:
-    cmd = [sys.executable, d + "/serve.py"] + __ARGS__
-    with open(logf, "ab") as lf:
+    instance = uuid.uuid4().hex
+    cmd = [sys.executable, str(d / "serve.py")] + args + ["--instance", instance]
+    with (d / "serve.log").open("ab") as lf:
         p = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                              start_new_session=True, cwd=d)
-    open(pidf, "w").write(str(p.pid))
-    _emit({"started": True, "pid": p.pid})
-'''
+    fields = Path(f"/proc/{p.pid}/stat").read_text().rsplit(")", 1)[1].split()
+    saved = dict(pid=p.pid, start_ticks=fields[19], instance=instance, args=args)
+    metadata.write_text(json.dumps(saved))
+    pidf.write_text(str(p.pid))
+    _emit(dict(saved, started=True))
+''')
 
 SERVE_HEALTH = '''
 import json, os, urllib.request
@@ -189,38 +223,26 @@ except Exception as e:
     _emit({"state": "down", "error": repr(e)[:200], "log_tail": tail})
 '''
 
-SERVE_STOP = '''
-import os, signal, time
-d = __DIR__
-pidf = d + "/serve.pid"
-res = {"stopped": False}
-try:
-    pid = int(open(pidf).read().strip())
+SERVE_STOP = _locked_process_operation('''
+running = inspect_process()
+if running:
+    pid, _, saved = running
+    if __INSTANCE__ and saved.get("instance") != __INSTANCE__:
+        raise RuntimeError("refusing to stop a different server instance")
     os.killpg(pid, signal.SIGTERM)
-    for _ in range(50):
-        try:
-            os.kill(pid, 0)
-            state = open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()[0]
-            if state == "Z":
-                break
-        except Exception:
+    for attempt in range(60):
+        if inspect_process() is None:
             break
+        if attempt == 50:
+            os.killpg(pid, signal.SIGKILL)
         time.sleep(0.2)
     else:
-        os.killpg(pid, signal.SIGKILL)
-    res = {"stopped": True, "pid": pid}
-except FileNotFoundError:
-    res["note"] = "no pid file"
-except ProcessLookupError:
-    res = {"stopped": True, "note": "process already gone"}
-except Exception as e:
-    res["error"] = repr(e)[:200]
-try:
-    os.remove(pidf)
-except Exception:
-    pass
-_emit(res)
-'''
+        raise RuntimeError("server did not stop")
+pidf.unlink(missing_ok=True)
+metadata.unlink(missing_ok=True)
+_emit({"stopped": True, "pid": running[0] if running else None})
+''')
+
 
 SERVE_LOGS = '''
 d, n = __DIR__, __N__
@@ -239,10 +261,18 @@ req = urllib.request.Request(f"http://127.0.0.1:{__PORT__}/v1/chat/completions",
 try:
     with urllib.request.urlopen(req, timeout=__TIMEOUT__) as r:
         if stream:
+            done = False
             for raw in r:
                 line = raw.decode("utf-8", "replace").strip()
                 if line.startswith("data:"):
-                    _emit({"chunk": line[5:].strip()})
+                    chunk = line[5:].strip()
+                    if chunk == "[DONE]":
+                        done = True
+                        break
+                    json.loads(chunk)
+                    _emit({"chunk": chunk})
+            if not done:
+                raise ValueError("incomplete stream: upstream closed before [DONE]")
             _emit({"status": 200, "done": True})
         else:
             _emit({"status": 200, "body": json.loads(r.read().decode())})

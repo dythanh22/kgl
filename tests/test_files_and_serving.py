@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import os
 import threading
 import unittest
@@ -16,13 +17,13 @@ class FileTests(FakeEnvTest):
     def test_upload_download_roundtrip_multi_chunk(self):
         src = os.path.join(self.tmp, "src.bin")
         data = os.urandom(5000)  # chunk_kb=1 -> 5 chunks
-        open(src, "wb").write(data)
+        Path(src).write_bytes(data)
         r = upload_file(self.rt, src, "sub/dir/f.bin")
         self.assertEqual(r["size"], 5000)
-        self.assertEqual(open(os.path.join(self.workdir, "sub/dir/f.bin"), "rb").read(), data)
+        self.assertEqual((Path(self.workdir) / "sub/dir/f.bin").read_bytes(), data)
         dst = os.path.join(self.tmp, "out", "back.bin")
         download_file(self.rt, "sub/dir/f.bin", dst)
-        self.assertEqual(open(dst, "rb").read(), data)
+        self.assertEqual(Path(dst).read_bytes(), data)
 
     def test_empty_file_and_missing(self):
         src = os.path.join(self.tmp, "e")
@@ -97,6 +98,15 @@ class ServeTests(FakeEnvTest):
             with self.assertRaises(urllib.error.HTTPError) as cm:
                 post(msg, key="wrong")
             self.assertEqual(cm.exception.code, 401)
+            ready = urllib.request.Request(base + "/ready", headers={"Authorization": "Bearer k"})
+            with urllib.request.urlopen(ready) as reply:
+                self.assertEqual(json.load(reply)["health"]["backend"], "echo")
+            self.mgr.stop()
+            with urllib.request.urlopen(base + "/health") as reply:
+                self.assertEqual(reply.status, 200)
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(ready)
+            self.assertEqual(cm.exception.code, 503)
             models = json.loads(urllib.request.urlopen(urllib.request.Request(
                 base + "/v1/models", headers={"Authorization": "Bearer k"})).read())
             self.assertEqual(models["data"][0]["id"], "echo")

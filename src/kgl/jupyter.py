@@ -63,7 +63,7 @@ class JupyterClient:
         self.headers = dict(headers or {})
         self.timeout = timeout
 
-    def _request(self, method: str, path: str, body: dict | None = None):
+    def _request(self, method: str, path: str, body: dict | None = None, timeout: float | None = None):
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(
             self.ep.http(path), data=data, method=method,
@@ -72,7 +72,7 @@ class JupyterClient:
         try:
             ctx = (ssl.create_default_context(cafile=os.environ["KGL_CA_FILE"])
                    if os.environ.get("KGL_CA_FILE") else None)
-            with urllib.request.urlopen(req, timeout=self.timeout, context=ctx) as r:
+            with urllib.request.urlopen(req, timeout=timeout if timeout is not None else self.timeout, context=ctx) as r:
                 raw = r.read()
         except urllib.error.HTTPError as e:
             if e.code in (401, 403):
@@ -97,8 +97,8 @@ class JupyterClient:
     def list_kernels(self) -> list[dict]:
         return self._request("GET", "/api/kernels") or []
 
-    def get_kernel(self, kernel_id: str) -> dict:
-        return self._request("GET", f"/api/kernels/{kernel_id}")
+    def get_kernel(self, kernel_id: str, timeout: float | None = None) -> dict:
+        return self._request("GET", f"/api/kernels/{kernel_id}", timeout=timeout)
 
     def create_kernel(self, name: str | None = None) -> dict:
         return self._request("POST", "/api/kernels", {"name": name} if name else {})
@@ -152,15 +152,14 @@ class KernelChannel:
         total_timeout: max seconds overall (None = unlimited).
         """
         msg_id, payload = self._request_msg(code)
-        try:
-            self.ws.send(payload)
-        except ConnectionLost as e:
-            raise ConnectionLost(str(e), sent=False) from e
+        start = time.monotonic()
+        self.ws.write_deadline = None if total_timeout is None else start + total_timeout
+        self.ws.send(payload)
         res = ExecResult()
         parts: list[str] = []
         got_reply = got_idle = False
         idle_at: float | None = None
-        start = last_msg = time.monotonic()
+        last_msg = start
         while True:
             now = time.monotonic()
             if total_timeout is not None and now - start > total_timeout:
@@ -168,7 +167,7 @@ class KernelChannel:
             if idle_timeout is not None and now - last_msg > idle_timeout:
                 raise TimeoutError(f"no output for {idle_timeout:.0f}s")
             if got_idle and not got_reply and idle_at and now - idle_at > 5:
-                break  # reply never arrived; idle is enough
+                raise ConnectionLost("missing execute_reply; execution outcome unknown", sent=True)
             wait = ping_interval
             if total_timeout is not None:
                 wait = min(wait, max(0.05, total_timeout - (now - start)))
@@ -177,6 +176,8 @@ class KernelChannel:
             try:
                 raw = self.ws.recv(timeout=wait)
             except TimeoutError:
+                if total_timeout is not None and time.monotonic() - start >= total_timeout:
+                    raise TimeoutError("execution deadline exceeded; outcome unknown")
                 try:
                     self.ws.ping()
                 except ConnectionLost as e:
@@ -184,7 +185,6 @@ class KernelChannel:
                 continue
             except ConnectionLost as e:
                 raise ConnectionLost(str(e), sent=True) from e
-            last_msg = time.monotonic()
             try:
                 msg = json.loads(raw)
             except ValueError:
@@ -192,6 +192,7 @@ class KernelChannel:
                 continue
             if (msg.get("parent_header") or {}).get("msg_id") != msg_id:
                 continue
+            last_msg = time.monotonic()
             mtype = msg.get("msg_type") or (msg.get("header") or {}).get("msg_type")
             content = msg.get("content") or {}
             if mtype == "stream":

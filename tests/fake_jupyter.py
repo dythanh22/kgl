@@ -186,14 +186,19 @@ class FakeJupyter:
                              stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
         self._procs[kid] = p
         tail = b""
-        while True:
-            chunk = os.read(p.stdout.fileno(), 4096)
-            if not chunk:
-                break
-            tail = (tail + chunk)[-2000:]
-            self._send(h, hdr, "iopub", "stream", {"name": "stdout", "text": chunk.decode("utf-8", "replace")})
-        rc = p.wait()
-        self._procs.pop(kid, None)
+        try:
+            while True:
+                chunk = os.read(p.stdout.fileno(), 4096)
+                if not chunk:
+                    break
+                tail = (tail + chunk)[-2000:]
+                self._send(h, hdr, "iopub", "stream", {"name": "stdout", "text": chunk.decode("utf-8", "replace")})
+            rc = p.wait()
+        finally:
+            p.stdout.close()
+            p.wait()
+            if self._procs.get(kid) is p:
+                self._procs.pop(kid)
         if rc != 0:
             last = tail.decode("utf-8", "replace").strip().splitlines()[-1:] or [""]
             ename, _, evalue = last[0].partition(": ")

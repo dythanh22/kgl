@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import logging
 import os
@@ -99,6 +100,14 @@ def cmd_connect(a, st: Settings, store: SessionStore) -> int:
     url = a.proxy_url or os.environ.get("KGL_PROXY_URL")
     if url == "-":
         url = sys.stdin.readline().strip()
+    elif not url and sys.stdin.isatty():
+        try:
+            url = getpass.getpass("Kaggle: Run > Kaggle Jupyter Server > Manually Connect. "
+                                  "Paste VS Code Compatible URL (input hidden), then press Enter: ").strip()
+        except EOFError:
+            url = ""
+        if url:
+            eprint("URL received. Connecting...")
     if not url:
         raise KglError("missing proxy URL: use --proxy-url URL, '-' (stdin) or $KGL_PROXY_URL")
     headers = {}
@@ -107,6 +116,7 @@ def cmd_connect(a, st: Settings, store: SessionStore) -> int:
         if not v:
             raise KglError(f"bad --header {h!r}, expected 'Name: value'")
         headers[k.strip()] = v.strip()
+    prior = store.load()
     client = JupyterClient(url, headers)
     kernels = client.list_kernels()
     if a.kernel_id:
@@ -123,12 +133,14 @@ def cmd_connect(a, st: Settings, store: SessionStore) -> int:
         eprint("no kernel found; creating one (may not be permitted on Kaggle)")
         kernel = client.create_kernel()
     sess = Session(base_url=url, kernel_id=kernel["id"], headers=headers)
-    store.save(sess)
-    print(f"connected: {redact_url(url)} kernel={kernel['id'][:8]} "
+    print(f"selected: {redact_url(url)} kernel={kernel['id'][:8]} "
           f"state={kernel.get('execution_state', '?')}")
     rt = Runtime(sess, st)
     try:
-        for line in _fmt_probe(_probe(rt, st)):
+        lines = _fmt_probe(_probe(rt, st))
+        store.save(sess, expected=prior)
+        print("connected")
+        for line in lines:
             print(line)
     finally:
         rt.close()
@@ -249,21 +261,25 @@ def cmd_serve(a, st: Settings, store: SessionStore) -> int:
             h = mgr.start(a.model, a.backend, a.dtype, wait=not a.no_wait,
                           wait_timeout=a.wait_timeout, progress=eprint)
             s.serve = {"port": a.port, "model": a.model if a.backend != "echo" else "echo",
-                       "backend": a.backend}
-            store.save(s)
+                       "backend": a.backend, "instance": h.get("health", h)["instance"]}
+            store.save(s, expected=s)
             print("model server ready" if not a.no_wait else "model server launching")
+            return EXIT_OK
+        if a.serve_cmd == "logs":
+            print("\n".join(ServeManager(rt).logs(a.lines)))
+            return EXIT_OK
+        if not s.serve and a.serve_cmd == "stop":
+            print(json.dumps(ServeManager(rt).stop()))
             return EXIT_OK
         if not s.serve:
             raise KglError("no model server recorded; run `kgl serve start` first")
         mgr = ServeManager(rt, s.serve["port"])
         if a.serve_cmd == "status":
             print(json.dumps(mgr.health(), indent=2))
-        elif a.serve_cmd == "logs":
-            print("\n".join(mgr.logs(a.lines)))
         elif a.serve_cmd == "stop":
-            print(json.dumps(mgr.stop()))
+            print(json.dumps(mgr.stop(s.serve.get("instance"))))
             s.serve = None
-            store.save(s)
+            store.save(s, expected=s)
         elif a.serve_cmd == "proxy":
             host, _, port = a.listen.rpartition(":")
             key = a.api_key or os.environ.get("KGL_PROXY_KEY")
@@ -271,7 +287,7 @@ def cmd_serve(a, st: Settings, store: SessionStore) -> int:
                                     int(port), key)
             eprint(f"OpenAI-compatible endpoint: http://{host or '127.0.0.1'}:{port}/v1 "
                    f"(model={s.serve['model']}, auth={'on' if key else 'off'}); Ctrl-C to stop.\n"
-                   "Requests are serialized through one kernel connection.")
+                   "Keep this terminal open and send requests from a second terminal.")
             try:
                 srv.serve_forever()
             except KeyboardInterrupt:
@@ -280,8 +296,7 @@ def cmd_serve(a, st: Settings, store: SessionStore) -> int:
                 srv.server_close()
         return EXIT_OK
     finally:
-        if a.serve_cmd != "proxy":
-            rt.close()
+        rt.close()
 
 
 def cmd_infer(a, st: Settings, store: SessionStore) -> int:
@@ -326,9 +341,10 @@ def cmd_stop(a, st: Settings, store: SessionStore) -> int:
     try:
         if s.serve and not a.keep_server:
             try:
-                print("model server:", json.dumps(ServeManager(rt, s.serve["port"]).stop()))
+                print("model server:", json.dumps(ServeManager(rt, s.serve["port"]).stop(s.serve.get("instance"))))
             except KglError as e:
                 eprint(f"could not stop model server: {e}")
+                return EXIT_ERROR
         if a.kill_kernel:
             try:
                 rt.client.delete_kernel(s.kernel_id)
@@ -337,7 +353,7 @@ def cmd_stop(a, st: Settings, store: SessionStore) -> int:
                 eprint(f"could not delete kernel: {e}")
     finally:
         rt.close()
-    store.clear()
+    store.clear(expected=s)
     print("local session cleared. NOTE: the Kaggle notebook session itself is still running and "
           "counting against your quota - stop it from the Kaggle UI.")
     return EXIT_OK
@@ -372,7 +388,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("auth", help="check official Kaggle credentials / session").set_defaults(fn=cmd_auth)
 
-    c = sub.add_parser("connect", help="attach to a running notebook kernel via its proxy URL")
+    c = sub.add_parser("connect", help="attach using the VS Code Compatible URL from Run > Kaggle Jupyter Server")
     c.add_argument("--proxy-url", help="Jupyter base URL ('-' reads stdin; or $KGL_PROXY_URL)")
     c.add_argument("--header", action="append", help="extra HTTP header 'Name: value' (repeatable)")
     c.add_argument("--kernel-id", help="kernel id (prefix ok)")

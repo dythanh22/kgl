@@ -41,31 +41,37 @@ class ServeManager:
             else f"server process started (pid {r['pid']})")
         if not wait:
             return r
-        return self.wait_ready(wait_timeout, say)
+        result = self.wait_ready(wait_timeout, say, r["instance"], backend,
+                                 model if backend != "echo" else "echo")
+        result["started"] = bool(r.get("started"))
+        return result
 
-    def health(self) -> dict:
-        return self.rt.call(SERVE_HEALTH, DIR=self.dir, PORT=self.port)
+    def health(self, timeout: float = 10.0) -> dict:
+        return self.rt.call(SERVE_HEALTH, timeout=timeout, DIR=self.dir, PORT=self.port)
 
-    def wait_ready(self, timeout: float, say: Callable[[str], None] = lambda s: None) -> dict:
+    def wait_ready(self, timeout: float, say, instance: str, backend: str, model: str) -> dict:
         t0, last = time.monotonic(), None
         while time.monotonic() - t0 < timeout:
-            h = self.health()
+            h = self.health(timeout=max(0.01, timeout - (time.monotonic() - t0)))
             state = h["state"]
             if state != last:
                 say(f"server state: {state}")
                 last = state
             if state == "ready":
+                health = h["health"]
+                if (health.get("instance"), health.get("backend"), health.get("model")) != (instance, backend, model):
+                    raise ServeError("unexpected server identity, backend or model on requested port")
                 return h
             if h.get("health", {}).get("status") == "error":
                 raise ServeError("model failed to load: " + str(h["health"].get("error"))
                                  + "\nsee `kgl serve logs`")
             if state == "down" and time.monotonic() - t0 > 30:
                 raise ServeError("server not responding:\n" + "\n".join(h.get("log_tail", [])))
-            time.sleep(3)
+            time.sleep(min(1.0, max(0, timeout - (time.monotonic() - t0))))
         raise ServeError(f"timed out after {timeout:.0f}s waiting for model; see `kgl serve logs`")
 
-    def stop(self) -> dict:
-        return self.rt.call(SERVE_STOP, DIR=self.dir)
+    def stop(self, instance: str | None = None) -> dict:
+        return self.rt.call(SERVE_STOP, DIR=self.dir, INSTANCE=instance)
 
     def logs(self, n: int = 50) -> list[str]:
         return self.rt.call(SERVE_LOGS, DIR=self.dir, N=n).get("lines", [])
@@ -112,8 +118,7 @@ def infer_chat(rt: Runtime, port: int, payload: dict,
     parser = MarkerParser(handle)
     code = render(INFER, PAYLOAD=base64.b64encode(json.dumps(payload).encode()).decode(),
                   PORT=port, TIMEOUT=timeout)
-    r = rt.run(code, lambda name, text: parser.feed(text), idempotent=True,
-               total_timeout=timeout + 30)
+    r = rt.run(code, lambda name, text: parser.feed(text), total_timeout=timeout)
     if r.error:
         raise KglError(f"remote error: {r.error['ename']}: {r.error['evalue']}")
     res.latency_s = time.monotonic() - t0
@@ -155,6 +160,23 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
                 return self._json(200, {"status": "ok"})
             if not self._authorized():
                 return
+            if self.path == "/ready":
+                deadline = time.monotonic() + 5
+                try:
+                    rt.client.get_kernel(rt.session.kernel_id, timeout=5)
+                except (KglError, TimeoutError) as exc:
+                    return self._err(503, str(exc), "kernel_rest_unavailable")
+                try:
+                    result = ServeManager(rt, port).health(timeout=max(.01, deadline - time.monotonic()))
+                except (KglError, TimeoutError) as exc:
+                    return self._err(503, str(exc), "runtime_unavailable")
+                health = result.get("health", {})
+                expected = rt.session.serve or {}
+                ready = (result["state"] == "ready" and health.get("model") == model_name
+                         and health.get("backend") == expected.get("backend", health.get("backend"))
+                         and health.get("instance") == expected.get("instance", health.get("instance"))
+                         and (health.get("backend") == "echo" or str(health.get("device")).startswith("cuda")))
+                return self._json(200 if ready else 503, result)
             if self.path in ("/v1/models", "/models"):
                 return self._json(200, {"object": "list",
                                         "data": [{"id": model_name, "object": "model"}]})
@@ -184,19 +206,30 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
                 self.wfile.write(("data: " + json.dumps(obj) + "\n\n").encode())
                 self.wfile.flush()
 
+            def stream_error(message: str):
+                log.warning("incomplete stream: %s", message)
+                event = {"error": {"message": message, "type": "incomplete_stream"}}
+                try:
+                    self.wfile.write(("data: " + json.dumps(event) + "\n\n").encode())
+                    self.wfile.flush()
+                except OSError:
+                    pass
+
             try:
                 r = infer_chat(rt, port, req, on_chunk if stream else None)
             except (ConnectionLost, KernelGone) as e:
                 if started:
-                    return
+                    return stream_error(str(e))
                 return self._err(503, f"runtime unavailable: {e}", "kgl_connection_lost")
             except BrokenPipeError:
                 return
             except (KglError, TimeoutError) as e:
                 if started:
-                    return
+                    return stream_error(str(e))
                 return self._err(504 if isinstance(e, TimeoutError) else 502, str(e))
             if stream and started:
+                if r.status != 200:
+                    return stream_error(r.error or "incomplete upstream response")
                 try:
                     self.wfile.write(b"data: [DONE]\n\n")
                     self.wfile.flush()

@@ -46,12 +46,11 @@ def run_doctor(rt: Runtime, backend: str, model: str, port: int, n: int,
         return True, f"{len(ks)} kernel(s): " + ", ".join(f"{k['id'][:8]}({k.get('execution_state', '?')})" for k in ks)
 
     def s2():
-        r = rt.run("print(1+1)", check=True)
+        r = rt.run("print(1+1)", total_timeout=30, check=True)
         return r.text.strip() == "2", f"output={r.text.strip()!r}"
 
     def s3():
-        from .remote import last_marker, render
-        info = last_marker(rt.run(render(PROBE, WORKDIR=rt.settings.workdir), check=True).text) or {}
+        info = rt.call(PROBE, WORKDIR=rt.settings.workdir)
         gpus = info.get("gpus") or []
         if gpus:
             return True, "; ".join(f"{g['name']} {g['mem_total_mb']}MB" for g in gpus)
@@ -59,9 +58,16 @@ def run_doctor(rt: Runtime, backend: str, model: str, port: int, n: int,
 
     mgr = ServeManager(rt, port)
 
+    started_instance = None
+
     def s4():
-        mgr.start(model, backend, wait=True, wait_timeout=wait_timeout)
-        return True, f"backend={backend} model={model} ready"
+        nonlocal started_instance
+        result = mgr.start(model, backend, wait=True, wait_timeout=wait_timeout)
+        health = result["health"]
+        if result["started"]:
+            started_instance = health["instance"]
+        ok = backend == "echo" or str(health.get("device")).startswith("cuda")
+        return ok, str(health)
 
     lat: list[float] = []
     ttft: list[float] = []
@@ -96,8 +102,11 @@ def run_doctor(rt: Runtime, backend: str, model: str, port: int, n: int,
         if record("4 serve_start", s4):
             if record("5 infer_x%d" % n, s5):
                 record("6 reconnect", s6)
-            if not keep:
-                record("7 serve_stop", lambda: (True, str(mgr.stop())))
+        if not keep and started_instance:
+            def stop_server():
+                result = mgr.stop(started_instance)
+                return result.get("stopped") is True, str(result)
+            record("7 serve_stop", stop_server)
     return steps
 
 

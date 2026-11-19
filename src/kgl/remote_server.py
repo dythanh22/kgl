@@ -8,6 +8,7 @@ preinstalled on Kaggle images - unverified).
 """
 import argparse
 import json
+from queue import Empty
 import signal
 import sys
 import threading
@@ -20,6 +21,8 @@ class EchoBackend:
     """No model/GPU: validates the transport end to end."""
 
     name = "echo"
+    device = "cpu"
+    dtype = None
 
     def load(self):
         pass
@@ -37,6 +40,8 @@ class TransformersBackend:
 
     def __init__(self, model_id, dtype):
         self.model_id, self.dtype = model_id, dtype
+        self.failure = None
+        self.device = None
         self.lock = threading.Lock()
 
     def load(self):
@@ -49,22 +54,41 @@ class TransformersBackend:
         self.model = AutoModelForCausalLM.from_pretrained(self.model_id, torch_dtype=dtypes[self.dtype])
         self.model.to("cuda" if torch.cuda.is_available() else "cpu")
         self.model.eval()
+        self.device = str(self.model.device)
+        self.dtype = str(self.model.dtype)
 
     def generate(self, messages, max_tokens, temperature, top_p):
         from transformers import TextIteratorStreamer
 
         prompt = self.tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = self.tok(prompt, return_tensors="pt").to(self.model.device)
-        streamer = TextIteratorStreamer(self.tok, skip_prompt=True, skip_special_tokens=True)
+        streamer = TextIteratorStreamer(self.tok, skip_prompt=True, skip_special_tokens=True, timeout=60)
         kw = dict(**inputs, max_new_tokens=max_tokens, streamer=streamer, do_sample=temperature > 0)
         if temperature > 0:
             kw.update(temperature=temperature, top_p=top_p)
-        with self.lock:  # one generation at a time on the GPU
-            t = threading.Thread(target=self.model.generate, kwargs=kw, daemon=True)
-            t.start()
-            for piece in streamer:
-                yield piece
-            t.join()
+        if not self.lock.acquire(timeout=1):
+            raise RuntimeError("generation worker busy")
+        errors = []
+
+        def generate():
+            try:
+                self.model.generate(**kw)
+            except Exception as exc:
+                errors.append(exc)
+                streamer.end()
+            finally:
+                self.lock.release()
+
+        worker = threading.Thread(target=generate, daemon=True)
+        worker.start()
+        try:
+            yield from streamer
+        except Empty:
+            self.failure = "generation worker timed out; restart server"
+            raise TimeoutError(self.failure)
+        worker.join(timeout=1)
+        if errors:
+            raise errors[0]
 
 
 class State:
@@ -72,7 +96,7 @@ class State:
     error = None
 
 
-def make_handler(backend, model_id, state):
+def make_handler(backend, model_id, state, instance=None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
             sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
@@ -87,8 +111,10 @@ def make_handler(backend, model_id, state):
 
         def do_GET(self):
             if self.path == "/health":
-                self._json(200, {"status": state.status, "model": model_id,
-                                 "backend": backend.name, "error": state.error})
+                self._json(200, {"status": "error" if getattr(backend, "failure", None) else state.status,
+                                 "model": model_id, "instance": instance,
+                                 "device": backend.device, "dtype": backend.dtype,
+                                 "backend": backend.name, "error": getattr(backend, "failure", None) or state.error})
             elif self.path == "/v1/models":
                 self._json(200, {"object": "list", "data": [{"id": model_id, "object": "model"}]})
             else:
@@ -97,7 +123,7 @@ def make_handler(backend, model_id, state):
         def do_POST(self):
             if self.path != "/v1/chat/completions":
                 return self._json(404, {"error": {"message": "not found"}})
-            if state.status != "ready":
+            if state.status != "ready" or getattr(backend, "failure", None):
                 return self._json(503, {"error": {"message": f"model {state.status}: {state.error or ''}"}})
             try:
                 n = int(self.headers.get("Content-Length", "0"))
@@ -138,6 +164,9 @@ def make_handler(backend, model_id, state):
                 pass
             except Exception as e:  # generation failure
                 sys.stderr.write(f"generation error: {e!r}\n")
+                if req.get("stream") is True:
+                    self.close_connection = True
+                    return
                 try:
                     self._json(500, {"error": {"message": repr(e)}})
                 except Exception:
@@ -148,6 +177,7 @@ def make_handler(backend, model_id, state):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--instance")
     ap.add_argument("--model", default="Qwen/Qwen2.5-0.5B-Instruct")
     ap.add_argument("--backend", choices=["transformers", "echo"], default="transformers")
     ap.add_argument("--dtype", choices=["auto", "float16", "bfloat16", "float32"], default="float16")
@@ -158,7 +188,7 @@ def main():
     backend = EchoBackend() if a.backend == "echo" else TransformersBackend(a.model, a.dtype)
     model_id = a.model if a.backend != "echo" else "echo"
     state = State()
-    server = ThreadingHTTPServer((a.host, a.port), make_handler(backend, model_id, state))
+    server = ThreadingHTTPServer((a.host, a.port), make_handler(backend, model_id, state, a.instance))
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown).start())
 
     def load():

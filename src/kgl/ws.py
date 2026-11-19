@@ -83,6 +83,8 @@ class WebSocket:
         path = (sp.path or "/") + (f"?{sp.query}" if sp.query else "")
         self.closed = False
         self._buf = bytearray()
+        self._fragments: list[bytes] = []
+        self.write_deadline: float | None = None
         self._send_lock = threading.Lock()
         try:
             sock = socket.create_connection((sp.hostname, port), timeout=connect_timeout)
@@ -149,7 +151,6 @@ class WebSocket:
     def recv(self, timeout: float | None = None) -> str:
         """Return the next text message. Raises TimeoutError / ConnectionLost."""
         deadline = None if timeout is None else time.monotonic() + timeout
-        fragments: list[bytes] = []
         while True:
             frame = parse_frame(self._buf)
             if frame is None:
@@ -166,22 +167,27 @@ class WebSocket:
                 self.close()
                 raise ConnectionLost("connection closed by peer")
             if op in (OP_TEXT, OP_BIN):
-                fragments = [payload]
+                self._fragments = [payload]
             elif op == OP_CONT:
-                fragments.append(payload)
+                self._fragments.append(payload)
             if fin:
-                return b"".join(fragments).decode("utf-8", "replace")
+                message = b"".join(self._fragments)
+                self._fragments.clear()
+                return message.decode("utf-8", "replace")
 
     def _send(self, opcode: int, payload: bytes) -> None:
         if self.closed:
             raise ConnectionLost("connection is closed")
         with self._send_lock:
             try:
-                self._sock.settimeout(30)
+                timeout = 30 if self.write_deadline is None else min(30, self.write_deadline - time.monotonic())
+                if timeout <= 0:
+                    raise TimeoutError("write deadline exceeded")
+                self._sock.settimeout(timeout)
                 self._sock.sendall(encode_frame(opcode, payload))
             except OSError as e:
                 self.closed = True
-                raise ConnectionLost(f"send failed: {e}") from e
+                raise ConnectionLost(f"send failed, execution outcome unknown: {e}", sent=True) from e
 
     def send(self, text: str) -> None:
         self._send(OP_TEXT, text.encode("utf-8"))
@@ -193,6 +199,7 @@ class WebSocket:
         if not self.closed:
             self.closed = True
             try:
+                self._sock.settimeout(0.05)
                 self._sock.sendall(encode_frame(OP_CLOSE, b""))
             except OSError:
                 pass

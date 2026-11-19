@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+from pathlib import Path
 import os
 import sys
 import unittest
@@ -26,6 +27,20 @@ class CliTests(FakeEnvTest):
             rc = main(list(argv))
         return rc, out.getvalue(), err.getvalue()
 
+    def test_connect_prompt_and_headless(self):
+        with mock.patch.dict(os.environ, {"KGL_PROXY_URL": ""}), mock.patch("getpass.getpass") as prompt:
+            rc, _, error = self.kgl("connect")
+            self.assertNotEqual(rc, 0)
+            self.assertIn("--proxy-url", error)
+            prompt.assert_not_called()
+            prompt.return_value = self.server.url + "?token=hidden-test-token"
+            with mock.patch("sys.stdin", new=mock.Mock(isatty=lambda: True)):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                    self.assertEqual(main(["connect"]), 0)
+                self.assertNotIn("hidden-test-token", out.getvalue())
+                prompt.assert_called_once()
+
     def test_full_flow(self):
         rc, out, err = self.kgl("status")
         self.assertEqual(rc, 3)  # no session
@@ -50,11 +65,11 @@ class CliTests(FakeEnvTest):
         self.assertEqual(out.strip(), "shell-ok")  # marker line is hidden
 
         f = os.path.join(self.tmp, "a.txt")
-        open(f, "w").write("hello" * 500)
+        Path(f).write_text("hello" * 500)
         self.assertEqual(self.kgl("upload", f, "a.txt")[0], 0)
         back = os.path.join(self.tmp, "b.txt")
         self.assertEqual(self.kgl("download", "a.txt", back)[0], 0)
-        self.assertEqual(open(back).read(), "hello" * 500)
+        self.assertEqual(Path(back).read_text(), "hello" * 500)
 
         port = str(19000 + os.getpid() % 500)
         rc, out, err = self.kgl("serve", "start", "--backend", "echo", "--port", port,
@@ -83,8 +98,7 @@ class CliTests(FakeEnvTest):
         # step 3 (GPU) legitimately FAILs on this machine; everything else must pass.
         lines = [l for l in out.splitlines() if l.startswith("[")]
         failed = [l for l in lines if l.startswith("[FAIL]")]
-        self.assertEqual(len(failed), 1, out)
-        self.assertIn("gpu_visible", failed[0])
+        self.assertTrue(all("gpu_visible" in line for line in failed), out)
         self.assertTrue(any("infer_x5" in l and l.startswith("[PASS]") for l in lines), out)
         self.assertTrue(any("reconnect" in l and l.startswith("[PASS]") for l in lines), out)
 
