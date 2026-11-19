@@ -3,24 +3,31 @@ messaging, and expose a local OpenAI-compatible shim (no public tunnel)."""
 from __future__ import annotations
 
 import base64
+import hmac
+import ipaddress
 import json
 import logging
 import posixpath
+import select
+import socket
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
 
-from .errors import ConnectionLost, KernelGone, KglError, ServeError
-from .remote import (INFER, SERVE_HEALTH, SERVE_LOGS, SERVE_START, SERVE_STOP,
-                     MarkerParser, render, resolve_path)
+from .errors import ConnectionLost, KernelGone, KglError, ProtocolError, ServeError
+from .remote import (CANCEL_INFER, INFER, SERVE_HEALTH, SERVE_LOGS, SERVE_START, SERVE_STOP,
+                     MarkerParser, new_marker, render)
+from .remote_server import chat_args, parse_device_map
 from .runtime import Runtime
 from .files import upload_file
 
 log = logging.getLogger("kgl.serving")
 SERVER_SCRIPT = Path(__file__).with_name("remote_server.py")
+MAX_CHAT_BYTES = 512 * 1024
 
 
 class ServeManager:
@@ -30,24 +37,56 @@ class ServeManager:
 
     def start(self, model: str, backend: str = "transformers", dtype: str = "float16",
               wait: bool = True, wait_timeout: float = 900.0,
-              progress: Callable[[str], None] | None = None) -> dict:
+              progress: Callable[[str], None] | None = None, require_gpu: bool = False,
+              device_map: str | None = None, prefill_chunk_size: int | None = None) -> dict:
         say = progress or (lambda s: None)
+        if require_gpu and backend != "transformers":
+            raise ServeError("--require-gpu requires the transformers backend")
+        if device_map is not None:
+            if backend != "transformers":
+                raise ServeError("--device-map requires the transformers backend")
+            try:
+                parse_device_map(device_map)
+            except ValueError as exc:
+                raise ServeError(str(exc)) from exc
+        if prefill_chunk_size is not None and (prefill_chunk_size <= 0 or backend != "transformers"):
+            raise ServeError("--prefill-chunk-size requires a positive integer and the transformers backend")
         # Upload the server script (small; verified by sha256).
         upload_file(self.rt, SERVER_SCRIPT, posixpath.join(self.dir, "serve.py"))
         args = ["--model", model, "--backend", backend, "--dtype", dtype,
                 "--port", str(self.port)]
+        if require_gpu:
+            args.append("--require-gpu")
+        if device_map:
+            args.extend(["--device-map", device_map])
+        if prefill_chunk_size is not None:
+            args.extend(["--prefill-chunk-size", str(prefill_chunk_size)])
         r = self.rt.call(SERVE_START, DIR=self.dir, ARGS=args)
         say("server process already running" if r.get("already_running")
             else f"server process started (pid {r['pid']})")
         if not wait:
             return r
-        result = self.wait_ready(wait_timeout, say, r["instance"], backend,
-                                 model if backend != "echo" else "echo")
+        try:
+            result = self.wait_ready(wait_timeout, say, r["instance"], backend,
+                                     model if backend != "echo" else "echo")
+        except (KglError, TimeoutError, KeyboardInterrupt):
+            if r.get("started"):
+                try:
+                    self.stop(r["instance"])
+                except (KglError, TimeoutError) as exc:
+                    log.warning("server cleanup was not confirmed: %s", exc)
+            raise
         result["started"] = bool(r.get("started"))
         return result
 
     def health(self, timeout: float = 10.0) -> dict:
-        return self.rt.call(SERVE_HEALTH, timeout=timeout, DIR=self.dir, PORT=self.port)
+        control = self.rt.control_runtime()
+        try:
+            return (control or self.rt).call(SERVE_HEALTH, timeout=timeout, idempotent=True,
+                                             DIR=self.dir, PORT=self.port)
+        finally:
+            if control:
+                control.close()
 
     def wait_ready(self, timeout: float, say, instance: str, backend: str, model: str) -> dict:
         t0, last = time.monotonic(), None
@@ -71,7 +110,12 @@ class ServeManager:
         raise ServeError(f"timed out after {timeout:.0f}s waiting for model; see `kgl serve logs`")
 
     def stop(self, instance: str | None = None) -> dict:
-        return self.rt.call(SERVE_STOP, DIR=self.dir, INSTANCE=instance)
+        control = self.rt.control_runtime() if instance else None
+        try:
+            return (control or self.rt).call(SERVE_STOP, timeout=20, DIR=self.dir, INSTANCE=instance)
+        finally:
+            if control:
+                control.close()
 
     def logs(self, n: int = 50) -> list[str]:
         return self.rt.call(SERVE_LOGS, DIR=self.dir, N=n).get("lines", [])
@@ -89,13 +133,23 @@ class InferResult:
 
 def infer_chat(rt: Runtime, port: int, payload: dict,
                on_chunk: Callable[[dict], None] | None = None,
-               timeout: float = 600.0) -> InferResult:
+               timeout: float = 600.0, *, expected_instance: str | None = None,
+               check_client=None, on_cancel: Callable[[bool], None] | None = None) -> InferResult:
     """Send an OpenAI-style chat request to the VM server via the kernel."""
     res = InferResult()
     t0 = time.monotonic()
     pieces: list[str] = []
+    instance = expected_instance or (rt.session.serve or {}).get("instance")
+    request_id = uuid.uuid4().hex
+    got_status = False
+    submitted = False
+
+    def mark_submitted() -> None:
+        nonlocal submitted
+        submitted = True
 
     def handle(m: dict) -> None:
+        nonlocal got_status
         if "chunk" in m:
             if m["chunk"] == "[DONE]":
                 return
@@ -111,28 +165,60 @@ def infer_chat(rt: Runtime, port: int, payload: dict,
             if on_chunk:
                 on_chunk(obj)
         if "status" in m:
+            got_status = True
             res.status = m["status"]
             res.body = m.get("body")
             res.error = m.get("error")
 
-    parser = MarkerParser(handle)
-    code = render(INFER, PAYLOAD=base64.b64encode(json.dumps(payload).encode()).decode(),
-                  PORT=port, TIMEOUT=timeout)
-    r = rt.run(code, lambda name, text: parser.feed(text), total_timeout=timeout)
-    if r.error:
-        raise KglError(f"remote error: {r.error['ename']}: {r.error['evalue']}")
+    data = json.dumps(payload, ensure_ascii=False).encode()
+    if len(data) > MAX_CHAT_BYTES:
+        raise ServeError("chat request exceeds 512 KiB")
+    marker = new_marker()
+    parser = MarkerParser(handle, marker=marker)
+    code = render(INFER, marker=marker, PAYLOAD=base64.b64encode(data).decode(),
+                  PORT=port, TIMEOUT=timeout, OPTIONS={"instance": instance, "request_id": request_id})
+    try:
+        rt.run(code, lambda name, text: parser.feed(text) if name == "stdout" else None,
+               total_timeout=timeout, check=True, check_client=check_client, on_submit=mark_submitted)
+    except (KeyboardInterrupt, TimeoutError, ConnectionLost, OSError):
+        if not submitted or got_status:
+            raise
+        control = rt.control_runtime() if instance else None
+        confirmed = False
+        try:
+            if control:
+                confirmed = control.call(CANCEL_INFER, timeout=4, PORT=port, INSTANCE=instance,
+                                         REQUEST_ID=request_id).get("cancelled") is True
+        except (KglError, TimeoutError):
+            pass
+        finally:
+            if control:
+                control.close()
+        if on_cancel:
+            on_cancel(confirmed)
+        elif confirmed:
+            log.info("remote cancellation confirmed")
+        else:
+            log.warning("remote cancellation unconfirmed")
+        raise
+    if not got_status:
+        raise ProtocolError("inference ended without a result marker")
     res.latency_s = time.monotonic() - t0
     if res.body:
         res.text = (res.body.get("choices") or [{}])[0].get("message", {}).get("content", "")
     else:
         res.text = "".join(pieces)
-    if res.status == 0 and not res.error:
-        res.error = "no response from remote server"
     return res
 
 
-def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | None):
+def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | None,
+                       listen_host: str = "127.0.0.1"):
+    last_health = None
+    admission = threading.Lock()
+
     class Handler(BaseHTTPRequestHandler):
+        timeout = 10
+
         def log_message(self, fmt, *args):
             log.info("proxy: " + fmt, *args)
 
@@ -150,12 +236,37 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
         def _authorized(self) -> bool:
             if not api_key:
                 return True
-            if self.headers.get("Authorization") == f"Bearer {api_key}":
+            if hmac.compare_digest(self.headers.get("Authorization", "").encode(),
+                                   f"Bearer {api_key}".encode()):
                 return True
             self._err(401, "invalid api key", "invalid_request_error")
             return False
 
+        def _valid_host(self) -> bool:
+            values = self.headers.get_all("Host", [])
+            if len(values) == 1:
+                host = values[0].lower()
+                bound_ip, bound_port = self.connection.getsockname()[:2]
+                names = {listen_host.lower(), bound_ip}
+                if ipaddress.ip_address(bound_ip).is_loopback:
+                    names.add("localhost")
+                names -= {"0.0.0.0", "::"}
+                allowed = {f"{name}:{bound_port}" for name in names}
+                if bound_port == 80:
+                    allowed.update(names)
+                if host in allowed:
+                    origins = self.headers.get_all("Origin", [])
+                    if not origins or origins == [f"http://{host}"]:
+                        return True
+                    self._err(403, "untrusted Origin", "invalid_request_error")
+                    return False
+            self._err(400, "untrusted Host", "invalid_request_error")
+            return False
+
         def do_GET(self):
+            nonlocal last_health
+            if not self._valid_host():
+                return
             if self.path == "/health":
                 return self._json(200, {"status": "ok"})
             if not self._authorized():
@@ -163,15 +274,24 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
             if self.path == "/ready":
                 deadline = time.monotonic() + 5
                 try:
-                    rt.client.get_kernel(rt.session.kernel_id, timeout=5)
+                    kernel = rt.client.get_kernel(rt.session.kernel_id, timeout=5)
                 except (KglError, TimeoutError) as exc:
                     return self._err(503, str(exc), "kernel_rest_unavailable")
+                if kernel.get("execution_state") == "busy":
+                    expected = rt.session.serve or {}
+                    result = {"state": "busy", "instance": expected.get("instance")}
+                    if last_health is not None:
+                        checked_at, health = last_health
+                        result.update(last_health=health, health_age_s=time.monotonic() - checked_at)
+                    return self._json(503, result)
                 try:
                     result = ServeManager(rt, port).health(timeout=max(.01, deadline - time.monotonic()))
                 except (KglError, TimeoutError) as exc:
                     return self._err(503, str(exc), "runtime_unavailable")
                 health = result.get("health", {})
                 expected = rt.session.serve or {}
+                if health:
+                    last_health = (time.monotonic(), health)
                 ready = (result["state"] == "ready" and health.get("model") == model_name
                          and health.get("backend") == expected.get("backend", health.get("backend"))
                          and health.get("instance") == expected.get("instance", health.get("instance"))
@@ -183,15 +303,27 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
             self._err(404, "not found")
 
         def do_POST(self):
-            if not self._authorized():
+            if not self._valid_host() or not self._authorized():
                 return
             if self.path not in ("/v1/chat/completions", "/chat/completions"):
                 return self._err(404, "only /v1/chat/completions is supported")
+            if self.headers.get_content_type() != "application/json":
+                return self._err(415, "Content-Type must be application/json", "invalid_request_error")
             try:
-                req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
-                assert isinstance(req.get("messages"), list)
-            except Exception:
-                return self._err(400, "invalid JSON body (need 'messages')", "invalid_request_error")
+                lengths = self.headers.get_all("Content-Length", [])
+                if len(lengths) != 1 or self.headers.get("Transfer-Encoding"):
+                    raise ValueError("a single Content-Length is required")
+                length = int(lengths[0])
+                if length > MAX_CHAT_BYTES:
+                    return self._err(413, "chat request exceeds 512 KiB", "invalid_request_error")
+                if length <= 0:
+                    raise ValueError("chat request cannot be empty")
+                req = json.loads(self.rfile.read(length))
+                chat_args(req, model_name)
+            except (ValueError, RecursionError) as exc:
+                return self._err(400, str(exc), "invalid_request_error")
+            except TimeoutError:
+                return self._err(408, "timed out reading request body", "invalid_request_error")
             stream = req.get("stream") is True
             started = False
 
@@ -215,13 +347,24 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
                 except OSError:
                     pass
 
+            def check_client():
+                readable, _, _ = select.select([self.connection], [], [], 0)
+                if readable and not self.connection.recv(1, socket.MSG_PEEK):
+                    raise BrokenPipeError("HTTP client disconnected")
+
             try:
-                r = infer_chat(rt, port, req, on_chunk if stream else None)
+                req.setdefault("model", model_name)
+                if not admission.acquire(blocking=False):
+                    return self._err(503, "inference already running", "worker_busy")
+                try:
+                    r = infer_chat(rt, port, req, on_chunk if stream else None, check_client=check_client)
+                finally:
+                    admission.release()
             except (ConnectionLost, KernelGone) as e:
                 if started:
                     return stream_error(str(e))
                 return self._err(503, f"runtime unavailable: {e}", "kgl_connection_lost")
-            except BrokenPipeError:
+            except (BrokenPipeError, ConnectionResetError):
                 return
             except (KglError, TimeoutError) as e:
                 if started:
@@ -238,14 +381,23 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
                 return
             if r.status == 200 and r.body is not None:
                 return self._json(200, r.body)
-            self._err(503 if r.status == 503 else 502, r.error or "upstream error")
+            status = r.status if r.status in (400, 409, 503, 504) else 502
+            self._err(status, r.error or "upstream error")
 
     return Handler
 
 
 def make_proxy_server(rt: Runtime, port: int, model_name: str, host: str = "127.0.0.1",
                       listen_port: int = 8001, api_key: str | None = None) -> ThreadingHTTPServer:
+    if host.lower() == "localhost":
+        host = "127.0.0.1"
+    try:
+        loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = False
+    if not loopback and not api_key:
+        raise ServeError("binding the proxy outside loopback requires KGL_PROXY_KEY or --api-key")
     srv = ThreadingHTTPServer((host, listen_port),
-                              make_proxy_handler(rt, port, model_name, api_key))
+                              make_proxy_handler(rt, port, model_name, api_key, host))
     srv.daemon_threads = True
     return srv

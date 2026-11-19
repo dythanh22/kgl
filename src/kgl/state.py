@@ -3,6 +3,7 @@ file is created 0600 inside a 0700 directory and URLs are redacted in logs."""
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import tempfile
@@ -54,9 +55,28 @@ class SessionStore:
 
     def load(self) -> Session | None:
         try:
-            return Session(**json.loads(self.path.read_text()))
+            session = Session(**json.loads(self.path.read_text()))
+            if (not isinstance(session.base_url, str) or not isinstance(session.kernel_id, str)
+                    or not isinstance(session.headers, dict)
+                    or not all(isinstance(k, str) and isinstance(v, str)
+                               for k, v in session.headers.items())
+                    or not isinstance(session.connected_at, (int, float))
+                    or not math.isfinite(session.connected_at)
+                    or (session.revision is not None and not isinstance(session.revision, str))):
+                raise ValueError
+            if session.serve is not None and (
+                    not isinstance(session.serve, dict)
+                    or type(session.serve.get("port")) is not int
+                    or not 1 <= session.serve["port"] <= 65535
+                    or not isinstance(session.serve.get("model"), str)
+                    or not isinstance(session.serve.get("backend"), str)
+                    or ("instance" in session.serve and not isinstance(session.serve["instance"], str))):
+                raise ValueError
+            return session
         except FileNotFoundError:
             return None
+        except (ValueError, TypeError, OverflowError, RecursionError) as exc:
+            raise KglError("invalid session.json; move it aside and run `kgl connect` again") from exc
 
     @contextmanager
     def _write_lock(self, expected):

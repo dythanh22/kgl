@@ -50,10 +50,10 @@ def main():
         manager = ServeManager(rt, port)
         instance = None
         try:
-            health = manager.start(model, wait_timeout=180)["health"]
+            health = manager.start(model, wait_timeout=180, require_gpu=True)["health"]
             instance = health["instance"]
             assert health["device"].startswith("cuda"), health
-            assert manager.start(model, wait_timeout=15)["health"]["instance"] == instance
+            assert manager.start(model, wait_timeout=15, require_gpu=True)["health"]["instance"] == instance
             rt.session.serve = dict(instance=instance, backend="transformers", model=model, port=port)
             with make_proxy_server(rt, port, model, listen_port=0) as proxy:
                 thread = threading.Thread(target=proxy.serve_forever, daemon=True)
@@ -68,6 +68,7 @@ def main():
                     thread.join()
 
             interrupted = False
+            cancelled = []
             def disconnect(chunk):
                 nonlocal interrupted
                 if not interrupted and chunk["choices"][0]["delta"].get("content"):
@@ -75,18 +76,22 @@ def main():
                     rt._channel.ws._sock.shutdown(socket.SHUT_RDWR)
 
             payload = {"messages": [{"role": "user", "content": "Count from one to fifty."}],
-                       "max_tokens": 64, "stream": True}
+                       "max_tokens": 256, "stream": True}
             try:
-                infer_chat(rt, port, payload, disconnect, timeout=30)
+                infer_chat(rt, port, payload, disconnect, timeout=30, on_cancel=cancelled.append)
             except ConnectionLost as exc:
                 assert interrupted and exc.sent
             else:
                 raise AssertionError("expected the in-flight stream to fail")
+            control_enabled = settings.control_kernel_id not in (None, session.kernel_id)
+            if control_enabled:
+                assert cancelled == [True], "auxiliary kernel did not confirm that the worker stopped"
             reply = infer_chat(rt, port, payload, timeout=45)
             assert reply.status == 200 and reply.text
         finally:
             stopped = manager.stop(instance)
-        print(json.dumps(dict(health=health, metrics=metrics, recovered=True, cleanup=stopped), indent=2))
+        print(json.dumps(dict(health=health, metrics=metrics, recovered=True, cleanup=stopped,
+                              cancellation_confirmed=cancelled == [True] if control_enabled else None), indent=2))
     finally:
         rt.close()
 

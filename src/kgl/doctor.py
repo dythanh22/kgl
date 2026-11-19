@@ -50,7 +50,7 @@ def run_doctor(rt: Runtime, backend: str, model: str, port: int, n: int,
         return r.text.strip() == "2", f"output={r.text.strip()!r}"
 
     def s3():
-        info = rt.call(PROBE, WORKDIR=rt.settings.workdir)
+        info = rt.call(PROBE, idempotent=True, WORKDIR=rt.settings.workdir)
         gpus = info.get("gpus") or []
         if gpus:
             return True, "; ".join(f"{g['name']} {g['mem_total_mb']}MB" for g in gpus)
@@ -59,13 +59,15 @@ def run_doctor(rt: Runtime, backend: str, model: str, port: int, n: int,
     mgr = ServeManager(rt, port)
 
     started_instance = None
+    instance = None
 
     def s4():
-        nonlocal started_instance
+        nonlocal started_instance, instance
         result = mgr.start(model, backend, wait=True, wait_timeout=wait_timeout)
         health = result["health"]
+        instance = health["instance"]
         if result["started"]:
-            started_instance = health["instance"]
+            started_instance = instance
         ok = backend == "echo" or str(health.get("device")).startswith("cuda")
         return ok, str(health)
 
@@ -76,7 +78,7 @@ def run_doctor(rt: Runtime, backend: str, model: str, port: int, n: int,
         fails = 0
         for i in range(n):
             r = infer_chat(rt, port, {"messages": [{"role": "user", "content": f"say hi #{i}"}],
-                                      "max_tokens": 32, "stream": True})
+                                      "max_tokens": 32, "stream": True}, expected_instance=instance)
             if r.status == 200 and r.text:
                 lat.append(r.latency_s)
                 if r.ttft_s is not None:
@@ -94,7 +96,7 @@ def run_doctor(rt: Runtime, backend: str, model: str, port: int, n: int,
     def s6():
         rt.drop_channel()  # simulates a lost WebSocket (not a real network cut)
         r = infer_chat(rt, port, {"messages": [{"role": "user", "content": "after reconnect"}],
-                                  "max_tokens": 16})
+                                  "max_tokens": 16}, expected_instance=instance)
         return r.status == 200 and bool(r.text), f"status={r.status}"
 
     if record("1 rest_reachable", s1) and record("2 kernel_exec", s2):

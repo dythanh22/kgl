@@ -145,43 +145,64 @@ class KernelChannel:
 
     def execute(self, code: str, on_output: OnOutput | None = None,
                 idle_timeout: float | None = None, total_timeout: float | None = None,
-                ping_interval: float = 20.0) -> ExecResult:
+                ping_interval: float = 20.0, kernel_state=None, check_client=None,
+                on_submit=None) -> ExecResult:
         """Run code; stream output via on_output; return when kernel is idle.
 
         idle_timeout: max seconds without any message (None = unlimited).
         total_timeout: max seconds overall (None = unlimited).
         """
-        msg_id, payload = self._request_msg(code)
         start = time.monotonic()
+        msg_id, payload = self._request_msg(code)
+        self.ws.pending_ping = None
         self.ws.write_deadline = None if total_timeout is None else start + total_timeout
+        if check_client:
+            check_client()
+        if on_submit:
+            on_submit()
         self.ws.send(payload)
         res = ExecResult()
         parts: list[str] = []
         got_reply = got_idle = False
         idle_at: float | None = None
         last_msg = start
+        next_ping = start + ping_interval
         while True:
+            if check_client:
+                check_client()
             now = time.monotonic()
-            if total_timeout is not None and now - start > total_timeout:
-                raise TimeoutError(f"execution exceeded {total_timeout:.0f}s")
-            if idle_timeout is not None and now - last_msg > idle_timeout:
-                raise TimeoutError(f"no output for {idle_timeout:.0f}s")
-            if got_idle and not got_reply and idle_at and now - idle_at > 5:
+            if total_timeout is not None and now - start >= total_timeout:
+                raise TimeoutError(f"execution exceeded {total_timeout:g}s; outcome unknown")
+            if idle_timeout is not None and now - last_msg >= idle_timeout:
+                raise TimeoutError(f"no execution messages for {idle_timeout:g}s; outcome unknown")
+            if got_idle and not got_reply and idle_at is not None and now - idle_at >= 5:
                 raise ConnectionLost("missing execute_reply; execution outcome unknown", sent=True)
-            wait = ping_interval
+            if now >= next_ping:
+                if self.ws.pending_ping is not None:
+                    if kernel_state:
+                        kernel_state(min(ping_interval, self.ws.write_deadline - now)
+                                     if self.ws.write_deadline is not None else ping_interval)
+                    raise ConnectionLost("WebSocket pong deadline exceeded; check WebSocket proxy settings",
+                                         sent=True)
+                try:
+                    self.ws.ping(min(30, ping_interval))
+                except TimeoutError as e:
+                    raise TimeoutError("execution deadline exceeded; outcome unknown") from e
+                except ConnectionLost as e:
+                    raise ConnectionLost(str(e), sent=True) from e
+                next_ping = now + ping_interval
+            wait = next_ping - now
+            if check_client:
+                wait = min(wait, .25)
             if total_timeout is not None:
-                wait = min(wait, max(0.05, total_timeout - (now - start)))
+                wait = min(wait, total_timeout - (now - start))
             if idle_timeout is not None:
-                wait = min(wait, max(0.05, idle_timeout - (now - last_msg)))
+                wait = min(wait, idle_timeout - (now - last_msg))
+            if got_idle and not got_reply and idle_at is not None:
+                wait = min(wait, idle_at + 5 - now)
             try:
                 raw = self.ws.recv(timeout=wait)
             except TimeoutError:
-                if total_timeout is not None and time.monotonic() - start >= total_timeout:
-                    raise TimeoutError("execution deadline exceeded; outcome unknown")
-                try:
-                    self.ws.ping()
-                except ConnectionLost as e:
-                    raise ConnectionLost(str(e), sent=True) from e
                 continue
             except ConnectionLost as e:
                 raise ConnectionLost(str(e), sent=True) from e
@@ -190,11 +211,13 @@ class KernelChannel:
             except ValueError:
                 log.debug("non-JSON frame ignored")
                 continue
+            mtype = msg.get("msg_type") or (msg.get("header") or {}).get("msg_type")
+            content = msg.get("content") or {}
+            if mtype == "status" and content.get("execution_state") in ("dead", "restarting"):
+                raise KernelGone("kernel is " + content["execution_state"])
             if (msg.get("parent_header") or {}).get("msg_id") != msg_id:
                 continue
             last_msg = time.monotonic()
-            mtype = msg.get("msg_type") or (msg.get("header") or {}).get("msg_type")
-            content = msg.get("content") or {}
             if mtype == "stream":
                 text = content.get("text", "")
                 parts.append(text)

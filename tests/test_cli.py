@@ -8,6 +8,7 @@ import unittest
 from unittest import mock
 
 from kgl.cli import main
+from kgl.jupyter import ExecResult
 
 from .support import FakeEnvTest
 
@@ -63,6 +64,13 @@ class CliTests(FakeEnvTest):
         rc, out, _ = self.kgl("exec", "--shell", "echo shell-ok; exit 7")
         self.assertEqual(rc, 7)
         self.assertEqual(out.strip(), "shell-ok")  # marker line is hidden
+        self.assertEqual(self.kgl("exec", "--shell", "exit 127")[0], 127)
+        self.assertEqual(self.kgl("exec", "--shell", "kill -TERM $$")[0], 143)
+        self.assertEqual(self.kgl("exec", "print('@@KGL@@{}')")[:2], (0, "@@KGL@@{}\n"))
+        with mock.patch("kgl.runtime.Runtime.run", return_value=ExecResult(status="aborted")):
+            rc, _, err = self.kgl("exec", "print('skipped')")
+            self.assertEqual(rc, 4)
+            self.assertIn("aborted", err)
 
         f = os.path.join(self.tmp, "a.txt")
         Path(f).write_text("hello" * 500)

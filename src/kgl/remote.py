@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import posixpath
+import re
+import uuid
 from textwrap import indent
 from typing import Callable
 
@@ -16,30 +18,40 @@ PRELUDE = (
 )
 
 
-def render(template: str, **values: object) -> str:
+def new_marker() -> str:
+    return MARKER + uuid.uuid4().hex + "@@"
+
+
+def render(template: str, *, marker: str = MARKER, **values: object) -> str:
     """Substitute __NAME__ placeholders with repr() of values (safe quoting)."""
-    out = template
-    for k, v in values.items():
-        out = out.replace(f"__{k}__", repr(v))
-    return f"exec({(PRELUDE + out)!r}, {{}})"
+    out = re.sub(r"__([A-Z][A-Z0-9_]*?)__",
+                 lambda match: repr(values[match[1]]) if match[1] in values else match[0],
+                 template)
+    return f"exec({(PRELUDE.replace(MARKER, marker) + out)!r}, {{}})"
 
 
 class MarkerParser:
     """Splits a text stream into passthrough text and `@@KGL@@{json}` events."""
 
-    def __init__(self, on_marker: Callable[[dict], None] | None = None) -> None:
+    def __init__(self, on_marker: Callable[[dict], None] | None = None,
+                 marker: str = MARKER) -> None:
         self.markers: list[dict] = []
         self._on_marker = on_marker
         self._buf = ""
+        self._marker = marker
+        self._line_start = True
 
     def feed(self, text: str) -> str:
         self._buf += text
         out: list[str] = []
         while (i := self._buf.find("\n")) != -1:
             line, self._buf = self._buf[:i], self._buf[i + 1:]
-            if line.startswith(MARKER):
+            at_start, self._line_start = self._line_start, True
+            if at_start and line.startswith(self._marker):
                 try:
-                    obj = json.loads(line[len(MARKER):])
+                    obj = json.loads(line[len(self._marker):])
+                    if not isinstance(obj, dict):
+                        raise ValueError("marker must contain an object")
                 except ValueError:
                     out.append(line + "\n")
                     continue
@@ -48,9 +60,11 @@ class MarkerParser:
                     self._on_marker(obj)
             else:
                 out.append(line + "\n")
-        if self._buf and not MARKER.startswith(self._buf[: len(MARKER)]):
+        if self._buf and (not self._line_start
+                          or not self._marker.startswith(self._buf[: len(self._marker)])):
             out.append(self._buf)
             self._buf = ""
+            self._line_start = False
         return "".join(out)
 
     def flush(self) -> str:
@@ -58,8 +72,8 @@ class MarkerParser:
         return rest
 
 
-def last_marker(text: str) -> dict | None:
-    p = MarkerParser()
+def last_marker(text: str, marker: str = MARKER) -> dict | None:
+    p = MarkerParser(marker=marker)
     p.feed(text if text.endswith("\n") else text + "\n")
     return p.markers[-1] if p.markers else None
 
@@ -112,9 +126,29 @@ UPLOAD_CHUNK = '''
 import base64, os
 p = __PATH__
 os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
-with open(p, __MODE__) as f:
-    f.write(base64.b64decode(__DATA__))
-_emit({"ok": True, "size": os.path.getsize(p)})
+with os.fdopen(os.open(p, os.O_WRONLY | os.O_CREAT, 0o600), "wb") as f:
+    f.seek(__OFF__)
+    _emit({"written": f.write(base64.b64decode(__DATA__))})
+'''
+
+COMMIT_UPLOAD = '''
+import hashlib, os
+p = __PATH__
+h = hashlib.sha256()
+with open(p, "rb") as f:
+    for b in iter(lambda: f.read(1 << 20), b""):
+        h.update(b)
+    size = f.tell()
+if size != __SIZE__ or h.hexdigest() != __HASH__:
+    raise ValueError("upload verification failed (size/sha256 mismatch)")
+os.replace(p, __TARGET__)
+_emit({"size": size, "sha256": h.hexdigest()})
+'''
+
+DISCARD_UPLOAD = '''
+from pathlib import Path
+Path(__PATH__).unlink(missing_ok=True)
+_emit({"ok": True})
 '''
 
 STAT = '''
@@ -140,12 +174,15 @@ _emit({"size": size, "offset": off, "data": base64.b64encode(data).decode()})
 '''
 
 SHELL = '''
-import subprocess, sys, os
+import codecs, subprocess, sys, os
 cwd = __CWD__
 p = subprocess.Popen(__CMD__, shell=True, executable="/bin/bash", stdout=subprocess.PIPE,
-                     stderr=subprocess.STDOUT, cwd=cwd if os.path.isdir(cwd) else None)
+                     stdin=subprocess.DEVNULL, stderr=subprocess.STDOUT,
+                     cwd=cwd if os.path.isdir(cwd) else None)
+decode = codecs.getincrementaldecoder("utf-8")("replace")
 for chunk in iter(lambda: p.stdout.read1(4096), b""):
-    sys.stdout.write(chunk.decode("utf-8", "replace")); sys.stdout.flush()
+    sys.stdout.write(decode.decode(chunk)); sys.stdout.flush()
+sys.stdout.write(decode.decode(b"", final=True))
 p.wait()
 sys.stdout.write("\\n"); _emit({"rc": p.returncode})
 '''
@@ -159,9 +196,10 @@ d.mkdir(parents=True, exist_ok=True)
 pidf, metadata = d / "serve.pid", d / "serve.json"
 
 def inspect_process():
-    if not pidf.exists():
+    saved = json.loads(metadata.read_text()) if metadata.exists() else {}
+    if not saved and not pidf.exists():
         return None
-    pid = int(pidf.read_text())
+    pid = saved["pid"] if saved else int(pidf.read_text())
     proc = Path("/proc") / str(pid)
     try:
         fields = (proc / "stat").read_text().rsplit(")", 1)[1].split()
@@ -170,7 +208,6 @@ def inspect_process():
         argv = (proc / "cmdline").read_bytes().decode().split(chr(0))
         if len(argv) < 2 or argv[1] != str(d / "serve.py") or os.getpgid(pid) != pid:
             raise RuntimeError("stale PID belongs to another process")
-        saved = json.loads(metadata.read_text()) if metadata.exists() else {}
         if saved and (saved["pid"] != pid or saved["start_ticks"] != fields[19]):
             raise RuntimeError("server PID identity changed")
         return pid, argv[2:-1], saved
@@ -189,7 +226,7 @@ running = inspect_process()
 args = __ARGS__
 if running:
     pid, argv, saved = running
-    if not saved:
+    if saved.get("protocol") != 2:
         raise RuntimeError("legacy server detected; stop it before upgrading")
     if args and argv != args + ["--instance", saved["instance"]]:
         raise RuntimeError("running server configuration conflicts with requested configuration")
@@ -200,15 +237,27 @@ else:
     with (d / "serve.log").open("ab") as lf:
         p = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                              start_new_session=True, cwd=d)
-    fields = Path(f"/proc/{p.pid}/stat").read_text().rsplit(")", 1)[1].split()
-    saved = dict(pid=p.pid, start_ticks=fields[19], instance=instance, args=args)
-    metadata.write_text(json.dumps(saved))
-    pidf.write_text(str(p.pid))
+    pending = d / f".serve-{instance}.json"
+    try:
+        fields = Path(f"/proc/{p.pid}/stat").read_text().rsplit(")", 1)[1].split()
+        saved = dict(pid=p.pid, start_ticks=fields[19], instance=instance, args=args, protocol=2)
+        pending.write_text(json.dumps(saved))
+        pending.replace(metadata)
+    except BaseException:
+        try:
+            if p.poll() is None:
+                os.killpg(p.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        raise
+    finally:
+        pending.unlink(missing_ok=True)
     _emit(dict(saved, started=True))
 ''')
 
 SERVE_HEALTH = '''
 import json, os, urllib.request
+from collections import deque
 d, port = __DIR__, __PORT__
 try:
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=3) as r:
@@ -217,7 +266,8 @@ try:
 except Exception as e:
     tail = []
     try:
-        tail = open(d + "/serve.log", errors="replace").read().splitlines()[-15:]
+        with open(d + "/serve.log", errors="replace") as f:
+            tail = [line.rstrip("\\n") for line in deque(f, maxlen=15)]
     except Exception:
         pass
     _emit({"state": "down", "error": repr(e)[:200], "log_tail": tail})
@@ -245,9 +295,11 @@ _emit({"stopped": True, "pid": running[0] if running else None})
 
 
 SERVE_LOGS = '''
+from collections import deque
 d, n = __DIR__, __N__
 try:
-    _emit({"lines": open(d + "/serve.log", errors="replace").read().splitlines()[-n:]})
+    with open(d + "/serve.log", errors="replace") as f:
+        _emit({"lines": [line.rstrip("\\n") for line in deque(f, maxlen=n)]})
 except Exception as e:
     _emit({"lines": [], "error": repr(e)[:200]})
 '''
@@ -256,28 +308,55 @@ INFER = '''
 import base64, json, urllib.request, urllib.error
 payload = base64.b64decode(__PAYLOAD__)
 stream = json.loads(payload).get("stream") is True
-req = urllib.request.Request(f"http://127.0.0.1:{__PORT__}/v1/chat/completions", data=payload,
-                             headers={"Content-Type": "application/json"})
+options = __OPTIONS__
+headers = {"Content-Type": "application/json", "X-Kgl-Timeout": str(__TIMEOUT__)}
+if options.get("request_id"):
+    headers["X-Kgl-Request-Id"] = options["request_id"]
+instance = options.get("instance")
+route = "/v1/chat/completions"
+if instance:
+    headers["X-Kgl-Instance"] = instance
+    route = "/internal/chat/completions"
+req = urllib.request.Request(f"http://127.0.0.1:{__PORT__}" + route, data=payload, headers=headers)
 try:
     with urllib.request.urlopen(req, timeout=__TIMEOUT__) as r:
         if stream:
-            done = False
             for raw in r:
                 line = raw.decode("utf-8", "replace").strip()
                 if line.startswith("data:"):
                     chunk = line[5:].strip()
                     if chunk == "[DONE]":
-                        done = True
+                        _emit({"status": 200, "done": True})
                         break
-                    json.loads(chunk)
+                    obj = json.loads(chunk)
+                    if "error" in obj:
+                        _emit({"status": 0, "error": obj["error"]["message"]})
+                        break
                     _emit({"chunk": chunk})
-            if not done:
+            else:
                 raise ValueError("incomplete stream: upstream closed before [DONE]")
-            _emit({"status": 200, "done": True})
         else:
             _emit({"status": 200, "body": json.loads(r.read().decode())})
 except urllib.error.HTTPError as e:
-    _emit({"status": e.code, "error": e.read().decode("utf-8", "replace")[:2000]})
+    raw = e.read(2000).decode("utf-8", "replace")
+    try:
+        raw = json.loads(raw)["error"]["message"]
+    except (ValueError, KeyError, TypeError):
+        pass
+    if instance and e.code == 404:
+        raw = "running server needs upgrading; run kgl serve stop and kgl serve start"
+    _emit({"status": e.code, "error": raw})
 except Exception as e:
     _emit({"status": 0, "error": repr(e)[:500]})
+'''
+
+CANCEL_INFER = '''
+import json, urllib.error, urllib.request
+req = urllib.request.Request(f"http://127.0.0.1:{__PORT__}/cancel", data=b"",
+    headers={"X-Kgl-Instance": __INSTANCE__, "X-Kgl-Request-Id": __REQUEST_ID__})
+try:
+    with urllib.request.urlopen(req, timeout=2.5) as reply:
+        _emit(json.load(reply))
+except (OSError, ValueError):
+    _emit({"cancelled": False})
 '''

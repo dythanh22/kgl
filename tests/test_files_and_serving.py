@@ -82,10 +82,10 @@ class ServeTests(FakeEnvTest):
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         base = f"http://127.0.0.1:{srv.server_address[1]}"
         try:
-            def post(body, key="k"):
+            def post(body, key="k", headers=None):
                 req = urllib.request.Request(base + "/v1/chat/completions", json.dumps(body).encode(),
                                              {"Content-Type": "application/json",
-                                              "Authorization": f"Bearer {key}"})
+                                              "Authorization": f"Bearer {key}", **(headers or {})})
                 return urllib.request.urlopen(req, timeout=30)
 
             msg = {"messages": [{"role": "user", "content": "ping"}]}
@@ -98,9 +98,34 @@ class ServeTests(FakeEnvTest):
             with self.assertRaises(urllib.error.HTTPError) as cm:
                 post(msg, key="wrong")
             self.assertEqual(cm.exception.code, 401)
+            before = len(self.server.executed)
+            invalid_headers = (
+                ({"Host": "example.invalid"}, 400),
+                ({"Origin": "http://example.invalid"}, 403),
+                ({"Content-Type": "text/plain"}, 415),
+            )
+            for headers, status in invalid_headers:
+                with self.subTest(headers=headers), self.assertRaises(urllib.error.HTTPError) as cm:
+                    post(msg, headers=headers)
+                self.assertEqual(cm.exception.code, status)
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                post({**msg, "max_completion_tokens": 10, "max_tokens": 10, "stream": True})
+            self.assertEqual(cm.exception.code, 400)
+            self.assertEqual(len(self.server.executed), before)
             ready = urllib.request.Request(base + "/ready", headers={"Authorization": "Bearer k"})
             with urllib.request.urlopen(ready) as reply:
                 self.assertEqual(json.load(reply)["health"]["backend"], "echo")
+            kernel = self.server.kernels[self.session.kernel_id]
+            kernel["execution_state"] = "busy"
+            try:
+                with self.assertRaises(urllib.error.HTTPError) as cm:
+                    urllib.request.urlopen(ready)
+                busy = json.load(cm.exception)
+                self.assertEqual((cm.exception.code, busy["state"]), (503, "busy"))
+                self.assertEqual(busy["last_health"]["backend"], "echo")
+                self.assertGreaterEqual(busy["health_age_s"], 0)
+            finally:
+                kernel["execution_state"] = "idle"
             self.mgr.stop()
             with urllib.request.urlopen(base + "/health") as reply:
                 self.assertEqual(reply.status, 200)

@@ -86,22 +86,36 @@ class WebSocket:
         self._fragments: list[bytes] = []
         self.write_deadline: float | None = None
         self._send_lock = threading.Lock()
+        self.pending_ping: bytes | None = None
+        deadline = time.monotonic() + connect_timeout
+        sock = None
         try:
             sock = socket.create_connection((sp.hostname, port), timeout=connect_timeout)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             if secure:
                 ctx = ssl.create_default_context(cafile=os.environ.get("KGL_CA_FILE") or None)
+                sock.settimeout(self._remaining(deadline))
                 sock = ctx.wrap_socket(sock, server_hostname=sp.hostname)
         except OSError as e:
+            if sock is not None:
+                sock.close()
             raise ConnectionLost(f"cannot connect to {sp.hostname}:{port}: {e}") from e
         self._sock = sock
         try:
-            self._handshake(sp.hostname, port, secure, path, headers or {}, connect_timeout)
+            self._handshake(sp.hostname, port, secure, path, headers or {}, deadline)
         except Exception:
             self._sock.close()
             raise
 
+    @staticmethod
+    def _remaining(deadline: float) -> float:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("WebSocket deadline exceeded")
+        return remaining
+
     def _handshake(self, host: str, port: int, secure: bool, path: str,
-                   headers: dict[str, str], timeout: float) -> None:
+                   headers: dict[str, str], deadline: float) -> None:
         key = base64.b64encode(os.urandom(16)).decode()
         default = 443 if secure else 80
         lines = [
@@ -112,12 +126,14 @@ class WebSocket:
         ]
         lines += [f"{k}: {v}" for k, v in headers.items()]
         try:
+            self._sock.settimeout(self._remaining(deadline))
             self._sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
-            deadline = time.monotonic() + timeout
             while b"\r\n\r\n" not in self._buf:
                 self._fill(deadline)
         except TimeoutError as e:
             raise ConnectionLost("WebSocket handshake timed out") from e
+        except OSError as e:
+            raise ConnectionLost(f"WebSocket handshake failed: {e}") from e
         head, _, rest = bytes(self._buf).partition(b"\r\n\r\n")
         self._buf = bytearray(rest)
         status_line, *hdr_lines = head.decode("latin-1").split("\r\n")
@@ -152,6 +168,8 @@ class WebSocket:
         """Return the next text message. Raises TimeoutError / ConnectionLost."""
         deadline = None if timeout is None else time.monotonic() + timeout
         while True:
+            if deadline is not None:
+                self._remaining(deadline)
             frame = parse_frame(self._buf)
             if frame is None:
                 self._fill(deadline)
@@ -159,9 +177,11 @@ class WebSocket:
             fin, op, payload, used = frame
             del self._buf[:used]
             if op == OP_PING:
-                self._send(OP_PONG, payload)
+                self._send(OP_PONG, payload, timeout=30 if deadline is None else self._remaining(deadline))
                 continue
             if op == OP_PONG:
+                if payload == self.pending_ping:
+                    self.pending_ping = None
                 continue
             if op == OP_CLOSE:
                 self.close()
@@ -175,16 +195,18 @@ class WebSocket:
                 self._fragments.clear()
                 return message.decode("utf-8", "replace")
 
-    def _send(self, opcode: int, payload: bytes) -> None:
+    def _send(self, opcode: int, payload: bytes, *, timeout: float = 30) -> None:
         if self.closed:
             raise ConnectionLost("connection is closed")
+        frame = encode_frame(opcode, payload)
         with self._send_lock:
+            if self.write_deadline is not None:
+                timeout = min(timeout, self.write_deadline - time.monotonic())
+            if timeout <= 0:
+                raise TimeoutError("write deadline exceeded before sending")
             try:
-                timeout = 30 if self.write_deadline is None else min(30, self.write_deadline - time.monotonic())
-                if timeout <= 0:
-                    raise TimeoutError("write deadline exceeded")
                 self._sock.settimeout(timeout)
-                self._sock.sendall(encode_frame(opcode, payload))
+                self._sock.sendall(frame)
             except OSError as e:
                 self.closed = True
                 raise ConnectionLost(f"send failed, execution outcome unknown: {e}", sent=True) from e
@@ -192,8 +214,9 @@ class WebSocket:
     def send(self, text: str) -> None:
         self._send(OP_TEXT, text.encode("utf-8"))
 
-    def ping(self) -> None:
-        self._send(OP_PING, b"")
+    def ping(self, timeout: float = 30) -> None:
+        self.pending_ping = os.urandom(8)
+        self._send(OP_PING, self.pending_ping, timeout=timeout)
 
     def close(self) -> None:
         if not self.closed:

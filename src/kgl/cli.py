@@ -13,13 +13,13 @@ import time
 from pathlib import Path
 
 from . import __version__
-from .config import Settings
+from .config import Settings, seconds
 from .doctor import run_doctor, steps_to_dict
 from .errors import (AuthError, ConnectionLost, ExecutionError, KernelGone, KglError,
                      NoSession, ServeError)
 from .files import download_file, upload_file
 from .jupyter import JupyterClient
-from .remote import PROBE, SHELL, last_marker, render
+from .remote import PROBE, SHELL, new_marker, render
 from .runtime import Runtime
 from .serving import ServeManager, infer_chat, make_proxy_server
 from .state import Session, SessionStore, redact_headers, redact_url
@@ -52,7 +52,7 @@ def _write_stream(name: str, text: str) -> None:
 
 
 def _probe(rt: Runtime, st: Settings) -> dict:
-    return rt.call(PROBE, WORKDIR=st.workdir)
+    return rt.call(PROBE, idempotent=True, WORKDIR=st.workdir)
 
 
 def _fmt_probe(info: dict) -> list[str]:
@@ -156,13 +156,15 @@ def cmd_status(a, st: Settings, store: SessionStore) -> int:
     try:
         out["kernel"] = rt.client.get_kernel(s.kernel_id).get("execution_state", "?")
         out["connection"] = "ok"
-        info = _probe(rt, st)
-        out["probe"] = info
+        info = {} if out["kernel"] == "busy" else _probe(rt, st)
+        if info:
+            out["probe"] = info
         if "container_uptime_s" in info:
             limit = st.session_limit_hours * 3600
             out["approx_session_remaining_s"] = int(limit - info["container_uptime_s"])
         if s.serve:
-            out["serve"] = ServeManager(rt, s.serve["port"]).health()
+            out["serve"] = ({"state": "busy", "instance": s.serve.get("instance")}
+                            if out["kernel"] == "busy" else ServeManager(rt, s.serve["port"]).health())
     except (ConnectionLost, AuthError, KernelGone) as e:
         out["connection"] = f"LOST: {e}"
     finally:
@@ -197,17 +199,23 @@ def _read_code(a) -> str:
 def cmd_exec(a, st: Settings, store: SessionStore) -> int:
     rt, s = _runtime(st, store)
     code = _read_code(a)
-    if a.shell:
-        code = render(SHELL, CWD=st.workdir, CMD=code)
+    timeouts = dict(idle_timeout=a.idle_timeout or None, total_timeout=a.timeout or None)
     try:
-        res, markers = rt.run_markers(code, _write_stream, idle_timeout=a.idle_timeout or None,
-                                      total_timeout=a.timeout or None)
+        if a.shell:
+            marker = new_marker()
+            code = render(SHELL, marker=marker, CWD=st.workdir, CMD=code)
+            res, markers = rt.run_markers(code, _write_stream, marker=marker, **timeouts)
+        else:
+            res = rt.run(code, _write_stream, **timeouts)
     except KeyboardInterrupt:
-        eprint("\ninterrupting remote kernel...")
-        try:
-            rt.client.interrupt_kernel(s.kernel_id)
-        except KglError as e:
-            eprint(f"interrupt failed: {e}")
+        if a.interrupt_kernel:
+            eprint("\ninterrupting remote kernel...")
+            try:
+                rt.client.interrupt_kernel(s.kernel_id)
+            except KglError as e:
+                eprint(f"interrupt failed: {e}")
+        else:
+            eprint("\nstopped waiting; remote execution may continue")
         return 130
     finally:
         rt.close()
@@ -215,8 +223,14 @@ def cmd_exec(a, st: Settings, store: SessionStore) -> int:
         eprint(ANSI.sub("", "\n".join(res.error["traceback"])) or
                f"{res.error['ename']}: {res.error['evalue']}")
         return EXIT_REMOTE
-    if a.shell and markers and "rc" in markers[-1]:
-        return max(0, min(int(markers[-1]["rc"]), 125))
+    if res.status != "ok":
+        eprint(f"remote execution status: {res.status}")
+        return EXIT_REMOTE
+    if a.shell:
+        if not markers or "rc" not in markers[-1]:
+            raise KglError("remote shell completed without an exit status")
+        rc = int(markers[-1]["rc"])
+        return rc if rc >= 0 else 128 - rc
     return EXIT_OK
 
 
@@ -259,7 +273,8 @@ def cmd_serve(a, st: Settings, store: SessionStore) -> int:
         if a.serve_cmd == "start":
             mgr = ServeManager(rt, a.port)
             h = mgr.start(a.model, a.backend, a.dtype, wait=not a.no_wait,
-                          wait_timeout=a.wait_timeout, progress=eprint)
+                          wait_timeout=a.wait_timeout, progress=eprint, require_gpu=a.require_gpu,
+                          device_map=a.device_map, prefill_chunk_size=a.prefill_chunk_size)
             s.serve = {"port": a.port, "model": a.model if a.backend != "echo" else "echo",
                        "backend": a.backend, "instance": h.get("health", h)["instance"]}
             store.save(s, expected=s)
@@ -275,12 +290,23 @@ def cmd_serve(a, st: Settings, store: SessionStore) -> int:
             raise KglError("no model server recorded; run `kgl serve start` first")
         mgr = ServeManager(rt, s.serve["port"])
         if a.serve_cmd == "status":
-            print(json.dumps(mgr.health(), indent=2))
+            kernel = rt.client.get_kernel(s.kernel_id)
+            busy = kernel.get("execution_state") == "busy"
+            if busy and st.control_kernel_id in (None, s.kernel_id):
+                result = {"state": "busy", "instance": s.serve.get("instance")}
+            else:
+                result = mgr.health()
+                expected = s.serve.get("instance")
+                if expected and result.get("health") and result["health"].get("instance") != expected:
+                    result["state"] = "wrong_instance"
+            print(json.dumps(result, indent=2))
         elif a.serve_cmd == "stop":
             print(json.dumps(mgr.stop(s.serve.get("instance"))))
             s.serve = None
             store.save(s, expected=s)
         elif a.serve_cmd == "proxy":
+            if not s.serve.get("instance"):
+                raise ServeError("server instance is missing; run kgl serve stop and kgl serve start")
             host, _, port = a.listen.rpartition(":")
             key = a.api_key or os.environ.get("KGL_PROXY_KEY")
             srv = make_proxy_server(rt, s.serve["port"], s.serve["model"], host or "127.0.0.1",
@@ -303,6 +329,8 @@ def cmd_infer(a, st: Settings, store: SessionStore) -> int:
     rt, s = _runtime(st, store)
     if not s.serve:
         raise KglError("no model server recorded; run `kgl serve start` first")
+    if not s.serve.get("instance"):
+        raise ServeError("server instance is missing; run kgl serve stop and kgl serve start")
     prompt = " ".join(a.prompt) if a.prompt else sys.stdin.read()
     msgs = ([{"role": "system", "content": a.system}] if a.system else []) + \
            [{"role": "user", "content": prompt}]
@@ -317,7 +345,10 @@ def cmd_infer(a, st: Settings, store: SessionStore) -> int:
 
     try:
         r = infer_chat(rt, s.serve["port"], payload, on_chunk if payload["stream"] else None,
-                       timeout=a.timeout)
+                       timeout=a.timeout,
+                       on_cancel=lambda confirmed: eprint(
+                           "remote cancellation confirmed" if confirmed
+                           else "remote cancellation unconfirmed; the worker may still be running"))
     finally:
         rt.close()
     if r.status != 200:
@@ -405,6 +436,7 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--shell", action="store_true", help="treat input as a bash command")
     e.add_argument("--timeout", type=float, default=0, help="total seconds (0 = unlimited)")
     e.add_argument("--idle-timeout", type=float, default=0, help="seconds without output (0 = unlimited)")
+    e.add_argument("--interrupt-kernel", action="store_true", help="interrupt the shared kernel on Ctrl-C")
     e.set_defaults(fn=cmd_exec)
 
     u = sub.add_parser("upload", help="upload LOCAL to REMOTE (relative -> /kaggle/working)")
@@ -424,6 +456,9 @@ def build_parser() -> argparse.ArgumentParser:
     st_.add_argument("--dtype", choices=["auto", "float16", "bfloat16", "float32"], default="float16")
     st_.add_argument("--port", type=int, default=8000, help="VM-local port")
     st_.add_argument("--no-wait", action="store_true")
+    st_.add_argument("--require-gpu", action="store_true", help="fail model startup when CUDA is unavailable")
+    st_.add_argument("--device-map", help="'balanced' or a JSON object mapping module names to CUDA GPU indices")
+    st_.add_argument("--prefill-chunk-size", type=int, help="process long prompts in blocks of this many tokens")
     st_.add_argument("--wait-timeout", type=float, default=900)
     ss.add_parser("stop")
     ss.add_parser("status")
@@ -466,16 +501,22 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s", stream=sys.stderr)
-    st = Settings.from_env()
-    store = SessionStore(st.home)
     try:
+        st = Settings.from_env()
+        store = SessionStore(st.home)
+        for name in ("timeout", "idle_timeout", "wait_timeout"):
+            if hasattr(args, name):
+                seconds(getattr(args, name), "--" + name.replace("_", "-"), allow_zero=args.cmd == "exec")
         return args.fn(args, st, store)
     except KeyboardInterrupt:
         return 130
     except ExecutionError as e:
         eprint(f"remote error: {e}")
         return EXIT_REMOTE
-    except (ConnectionLost, AuthError, KernelGone, TimeoutError) as e:
+    except TimeoutError as e:
+        eprint(f"timeout: {e}")
+        return EXIT_CONNECTION
+    except (ConnectionLost, AuthError, KernelGone) as e:
         eprint(f"connection error: {e}")
         return EXIT_CONNECTION
     except NoSession as e:

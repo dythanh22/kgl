@@ -30,6 +30,10 @@ class KernelGone(KglError):
     """The kernel id we know about no longer exists on the server."""
 
 
+class ProtocolError(KglError):
+    """The remote operation did not return a valid result."""
+
+
 class ExecutionError(KglError):
     """Remote code raised an exception."""
 
