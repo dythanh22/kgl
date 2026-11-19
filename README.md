@@ -7,6 +7,7 @@ Use a running Kaggle GPU notebook from your terminal.
 - Run Python code or a local script on the notebook and stream its output back to your terminal.
 - Upload and download files with SHA-256 verification.
 - Run interactive inference on one or more GPUs and stream responses through an OpenAI-compatible chat endpoint.
+- Open a local browser demo for text chat or image classification, including your own classifier checkpoint.
 
 kgl connects to a notebook you start in Kaggle. Traffic goes through Jupyter, and the model server listens on loopback inside the notebook. Serving is tied to the life of that session and handles one active inference request at a time.
 
@@ -54,6 +55,8 @@ When finished, stop the local proxy with Ctrl-C, run `kgl stop`, and stop the no
 
 ## Documentation
 
+- [Browser demos for chat, image classification, and your own checkpoint](examples/demos.md)
+- [Other text models and image classification](examples/workloads.md)
 - [Setup, file transfer, and multi-GPU serving](docs/TESTING.md)
 - [Architecture, connection behavior, and configuration](docs/ARCHITECTURE.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)

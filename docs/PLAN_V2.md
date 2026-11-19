@@ -6,6 +6,8 @@
 
 **Điểm xuất phát.** Bản hiện tại đã qua 40 test local và 20/20 request ngắn trên một phiên Kaggle GPU. Sau khi WS bị cắt giữa stream, client báo lỗi và request kế tiếp thành công. Các kết quả đó làm mốc hồi quy. Độ bền một giờ, hủy tác vụ thực sự trên VM và phục hồi qua một phiên Kaggle mới vẫn cần bằng chứng. [Kết quả bản hiện tại](PLAN.md) · [Quy trình chạy lại](TESTING.md)
 
+**Mốc sản phẩm tiếp theo** là [demo trên laptop cho cá nhân và sinh viên](#demo-trên-laptop-cho-cá-nhân-và-sinh-viên). Phần này mô tả công việc dự kiến sau đợt nghiệm thu runtime.
+
 ## 1. Kênh rảnh, mất mạng và kernel chết — ưu tiên phát hành
 
 **Đã thấy trong mã.** Channel được dùng lại theo cờ closed. Ping chưa ràng buộc thời hạn nhận pong; trạng thái kernel ngoài request có thể bị bỏ qua theo parent ID. Timeout trước khi ghi byte đầu trong WS có thể bị bắt như lỗi gửi chưa rõ kết quả. Mức độ thường gặp của kết nối rảnh bị đóng trên Kaggle chưa được đo. [WS](../src/kgl/ws.py) · [Jupyter](../src/kgl/jupyter.py) · [Runtime](../src/kgl/runtime.py)
@@ -86,3 +88,37 @@ Checkpoint `cf98f3b` có 29.540.134.000 byte trọng số. Với Accelerate 1.15
 Thử lại cùng bản đồ với `--prefill-chunk-size 256` trên Transformers 5.20.2. Bốn lượt JSON/SSE ngắn đều đạt. Prompt 2.088 token sinh đủ 8 token và kết thúc SSE, TTFT 4,178 giây, tổng thời gian 5,471 giây. Prompt khoảng 4.100 token vẫn OOM khi GPU 0 cần cấp phát thêm 38 MiB. Request ngắn sau OOM, xác nhận hủy sau 1,372 giây và request tiếp theo đều đạt.
 
 Đỉnh VRAM toàn card trong lượt prefill chia đoạn là 14.897/15.360 MiB ở GPU 0 và 14.893/15.360 MiB ở GPU 1, khoảng 97% mỗi card. Các mức toàn card gồm 105 MiB mỗi GPU từ context CUDA mở khi chẩn đoán trên kernel notebook. Sau khi dừng server, hai card trở lại mức 105 MiB và kernel phụ đã được dọn. Checkpoint được giữ trong vùng tạm của VM để có thể dùng lại trong phiên hiện tại. [Cách chạy lại](TESTING.md#thử-chia-trọng-số-trên-hai-gpu) · [Chunked prefill trong Transformers](https://github.com/huggingface/transformers/blob/main/src/transformers/generation/utils.py)
+
+## Demo trên laptop cho cá nhân và sinh viên
+
+**Mục tiêu nghiệm thu.** Từ một checkout sạch và một notebook Kaggle có GPU, sinh viên mở giao diện trên laptop, gửi câu hỏi hoặc chọn ảnh và nhận kết quả từ model trên GPU. Sinh viên có thể thay checkpoint mẫu bằng checkpoint của bài tập mà vẫn dùng cùng giao diện. Demo phục vụ một lượt suy luận tại một thời điểm và kết thúc khi phiên Kaggle dừng.
+
+**Trạng thái triển khai.** Proxy có trang trình duyệt trên loopback cho chat và phân loại ảnh. Worker ảnh hỗ trợ cả thư mục Transformers trên VM và file Python cùng checkpoint riêng. Trên Tesla T4, Qwen2.5-0.5B trong cache trả lời qua CLI, SSE và Firefox headless. Firefox cũng hiển thị dự đoán của checkpoint ViT nhỏ tạo trên VM và classifier PyTorch hai nhãn đi kèm repo. Hai luồng ảnh xử lý hai ảnh liên tiếp và phục vụ tiếp sau ảnh lỗi. Các worker thử nghiệm đã được dừng. Cần nghiệm thu thêm hai model Hub SmolLM2 và ViT mặc định, cùng ca kết thúc và kết nối lại cả phiên Kaggle. [Hướng dẫn demo](../examples/demos.md)
+
+### Thứ tự triển khai và tiêu chí hoàn thành
+
+| Mốc | Thay đổi dự kiến | Nghiệm thu |
+|---|---|---|
+| 1. Demo chat | Thêm giao diện chat chạy trên laptop, dùng endpoint chat local hiện có. Cho phép chọn model khi khởi động worker. | Chạy SmolLM2 trên Kaggle, xác nhận model và thiết bị trong status, gửi một câu hỏi từ CLI và một câu từ trình duyệt, nhận đủ stream và dừng worker. |
+| 2. Demo phân loại ảnh | Thêm worker nạp classifier một lần và route local dự kiến `POST /predict`. Giao diện chọn ảnh, gửi ảnh qua proxy và hiển thị nhãn cùng điểm dự đoán. Xác định định dạng ảnh, giới hạn byte và kích thước ảnh giải mã trước khi chốt API. | Dùng classifier mẫu trên Kaggle, gửi hai ảnh lần lượt và xác nhận chỉ nạp model một lần. Ảnh hỏng hoặc quá giới hạn phải trả lỗi rõ ràng, lượt hợp lệ tiếp theo vẫn thành công. Kiểm tra riêng trường hợp worker đang bận. |
+| 3. Model của sinh viên | Worker CV nạp file Python do chủ notebook cung cấp. Hàm `load(checkpoint, device)` nạp model. Hàm `predict(model, image)` nhận ảnh RGB Pillow và trả danh sách nhãn cùng điểm số. | Thay classifier mẫu bằng checkpoint riêng, giữ nguyên giao diện trình duyệt. So sánh kết quả trên một ảnh cố định với script tham chiếu của sinh viên. Kiểm tra thông báo khi thiếu trọng số hoặc sai kiến trúc. |
+| 4. Trải nghiệm buổi trình bày | Trong cả hai demo, hiển thị trạng thái tải model, đang suy luận, worker bận hoặc mất kết nối. Khi có bằng chứng thiếu VRAM hoặc phiên hết hạn, chỉ rõ cách đổi cấu hình hoặc kết nối lại. | Thử lỗi nạp model, gửi lượt thứ hai khi đang bận và kết thúc phiên Kaggle. Kiểm tra thông báo, thao tác phục hồi và một request thành công sau khi kết nối lại. |
+
+### Dùng checkpoint riêng
+
+Người dùng có thể giữ model riêng tư trong toàn bộ quy trình. Hướng dẫn sau triển khai cần minh họa hai cách đưa model tới VM và loại artifact mà từng worker cần đọc.
+
+- **Checkpoint nhỏ trên laptop.** Dùng `kgl upload` cho từng file cần thiết. Ví dụ, `kgl upload classifier.pt classifier.pt` đặt trọng số ở `/kaggle/working/classifier.pt` với cấu hình mặc định. Với PyTorch state_dict, ví dụ phải kèm định nghĩa kiến trúc, tiền xử lý và bảng nhãn đúng với lần huấn luyện.
+- **Checkpoint lớn hoặc dùng lại qua nhiều phiên.** Gắn một Kaggle Dataset riêng tư vào notebook, lấy đường dẫn thực tế trong VM và dùng lại dataset khi mở phiên mới. Với LLM chat, truyền thư mục model vào `kgl serve start --require-gpu --model <thu-muc-tren-VM>`. Thư mục cần có cấu hình, trọng số và tokenizer tương thích với AutoModelForCausalLM cùng chat template. Hugging Face Hub ID là tùy chọn khi notebook có quyền truy cập model.
+
+### Hướng dẫn sử dụng sau khi triển khai
+
+Sau khi từng demo qua nghiệm thu, bổ sung lối vào từ README và viết hai hướng dẫn chạy từ đầu đến cuối trong examples. Mỗi hướng dẫn cần chỉ rõ thao tác trên Kaggle và trên laptop, thư viện cần ở từng máy, lệnh cho từng terminal, cách chọn model mẫu hoặc checkpoint riêng, cách mở giao diện, đầu vào mẫu và kết quả mong đợi. Kết thúc bằng cách dừng proxy, worker và phiên notebook. Ghi cấu hình đã kiểm chứng và các bước xử lý lỗi trong tài liệu kiểm thử và troubleshooting hiện có.
+
+Chạy lại theo đúng hướng dẫn từ checkout sạch với cả model mẫu và checkpoint riêng. Ghi phiên bản thư viện, GPU, model, kết quả và các bước còn phải làm thủ công. Thành công của demo local được tính khi trình duyệt trên laptop trình bày được kết quả.
+
+### Phạm vi các mốc sau
+
+- **Chia sẻ URL cho giảng viên.** Mốc đầu phục vụ trình chiếu từ laptop. Truy cập từ máy khác cần một thiết kế riêng về địa chỉ truy cập, xác thực và thời gian khả dụng phụ thuộc vào phiên Kaggle.
+- **vLLM.** Ưu tiên khi có bài tập cần chính engine này. Thử trên cấu hình GPU phù hợp, tích hợp start, readiness, stream, hủy và stop. Nếu mục tiêu là nhiều request đồng thời, đo cả đường truyền qua kernel và hành vi proxy khi bận.
+- **Ứng dụng web chạy trong VM.** Đánh giá chuyển tiếp route, asset và kết nối tương tác khi có một demo FastAPI hoặc Gradio cụ thể cần chạy toàn bộ ứng dụng trên Kaggle.

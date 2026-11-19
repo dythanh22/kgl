@@ -1,8 +1,8 @@
 # Kiến trúc
 
 ```
-Agent / app / terminal
-        │ HTTP (OpenAI-compatible)            kgl exec / infer / upload ...
+Agent / app / browser / terminal
+        │ HTTP (chat / predict)                kgl exec / infer / upload ...
         ▼                                              │
   kgl serve proxy (127.0.0.1)  ───────────────►  cli.py
         │                                              │
@@ -20,7 +20,7 @@ Agent / app / terminal
                          │  snippets from remote.py
                          ├─ upload/download/stat/probe (stdlib)
                          └─ subprocess: remote_server.py  (127.0.0.1:8000, not exposed)
-                                         └─ transformers (GPU) | echo
+                                         └─ transformers | image-classification | echo
 ```
 
 ## Module
@@ -32,15 +32,16 @@ Agent / app / terminal
 | `runtime.py` | Giữ channel, kết nối lười, chính sách retry (xem dưới) |
 | `remote.py` | Mã chạy trên VM và marker có nonce riêng cho từng lượt gọi nội bộ |
 | `files.py` | Truyền chunk base64 vào file tạm riêng, kiểm tra SHA-256 rồi thay file đích nguyên tử |
-| `remote_server.py` | Server chat-completions (stdlib `http.server`), backend `transformers`/`echo`, chỉ bind 127.0.0.1 |
-| `serving.py` | `ServeManager` (start/health/stop/logs), `infer_chat`, shim OpenAI-compat local |
+| `remote_server.py` | Worker chat hoặc phân loại ảnh (stdlib `http.server`), mặc định bind 127.0.0.1 |
+| `serving.py` | `ServeManager` (start/health/stop/logs), proxy chat và ảnh qua Jupyter |
+| `demo.html` | Giao diện local qua `kgl serve proxy --demo`, gửi request cùng origin với proxy |
 | `doctor.py` | Chạy lần lượt các spike và báo PASS/FAIL + thời gian |
 | `state.py` / `config.py` | Session 0600, redact; cấu hình qua biến môi trường |
 
 ## Luồng inference
 
 1. `kgl serve start`: upload `remote_server.py` (xác minh sha256) → `subprocess.Popen(..., start_new_session=True)` trên VM → poll `/health` qua kernel (`loading` → `ready`).
-2. `kgl infer` / shim nhận request → đóng gói JSON base64 → `execute_request` chạy snippet `INFER` trên VM → snippet gọi route nội bộ trên loopback với ID request và ID instance đã lưu → SSE đi về máy local qua marker stdout.
+2. `kgl infer` hoặc proxy nhận request → đóng gói JSON base64 → `execute_request` chạy snippet `INFER` trên VM → snippet gọi route nội bộ trên loopback với ID request và ID instance đã lưu → JSON hoặc SSE đi về máy local qua marker stdout. `POST /predict` gửi ảnh dưới dạng base64 và worker ảnh trả JSON.
 3. Không có cổng nào mở ra internet.
 
 ## Chính sách retry / mất kết nối
@@ -49,6 +50,7 @@ Agent / app / terminal
 - SSE chỉ phát `[DONE]` sau khi server trên VM báo hoàn tất. Với lỗi upstream sau khi stream đã mở, proxy phát event lỗi khi client còn nhận dữ liệu được. Request mới sẽ mở lại channel sau khi WS đứt.
 - `/health` của proxy local kiểm tra liveness. `/ready` kiểm tra kernel qua REST, execute qua WS, remote health và cấu hình phiên. Với Transformers, tiêu chí GPU là device CUDA. Mỗi instance mới có định danh riêng gắn với PID, thời điểm tạo tiến trình và tham số khởi động.
 - Timeout: đóng channel (trạng thái stream không xác định), lần gọi sau mở channel mới.
+- Worker ảnh chạy hàm `predict` đồng bộ. Nếu client ngắt hoặc hết thời gian chờ, worker chỉ xác nhận đã nhả lượt sau khi lời gọi đó kết thúc.
 - Kernel biến mất → `KernelGone` → `kgl connect` lại.
 - Ctrl-C trong `kgl exec` dừng lượt chờ. Cờ `--interrupt-kernel` cho phép gửi interrupt tới kernel dùng chung. Với inference, kernel phụ được cấu hình có thể chuyển tín hiệu hủy tới worker và kiểm tra worker đã nhả lượt.
 

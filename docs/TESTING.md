@@ -6,6 +6,12 @@
 
 Các lệnh dùng Bash trên Linux. Chạy từng khối trong terminal A trên máy cá nhân. Bước HTTP cần thêm terminal B. Chọn notebook thử nghiệm cho các ca ngắt WS hoặc restart server.
 
+## Nghiệm thu demo trên laptop
+
+Chạy lần lượt chat, classifier Transformers và classifier với checkpoint riêng theo [hướng dẫn demo](../examples/demos.md). Trên cả ba luồng, kiểm tra trang hiển thị đúng model và thiết bị. Chat đạt khi trả đủ stream. Classifier đạt khi xử lý hai ảnh liên tiếp, từ chối ảnh lỗi và trả kết quả hợp lệ ở lượt kế tiếp. Với ví dụ hai nhãn, ảnh đỏ và xanh dương phải cho nhãn đứng đầu tương ứng.
+
+Thử gửi thêm một yêu cầu khi worker đang bận và kiểm tra thông báo. Với phiên thử riêng, dừng notebook trong lúc demo đang mở, kiểm tra hướng dẫn kết nối lại rồi mở phiên mới và gửi một yêu cầu thành công. [Kết quả hiện có](PLAN_V2.md#demo-trên-laptop-cho-cá-nhân-và-sinh-viên)
+
 ## 1. Cài đặt và lập mốc local
 
 Mở terminal tại thư mục dự án chứa đủ các đường dẫn bên dưới. Nếu thiếu, lấy bản source đầy đủ trước khi cài. Chuẩn bị môi trường Python ≥ 3.10 có pip, curl, cùng quyền mở cổng localhost cho test. pip có thể cần Internet để lấy build dependency.
