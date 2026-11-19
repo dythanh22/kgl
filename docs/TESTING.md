@@ -2,46 +2,67 @@
 
 **Câu hỏi nghiệm thu:** Từ máy cá nhân, bạn có nhận được câu trả lời của đúng model trên GPU Kaggle, nhận đủ stream, và gửi được yêu cầu tiếp theo sau gián đoạn không?
 
-**Mốc đối chiếu ngày 19/11/2026.** Trên Python 3.14.4, 27/27 test local qua trong 17,753 giây, mã thoát 0. Có `ResourceWarning` về tài nguyên chưa đóng trong lúc kiểm thử. Suite dùng Jupyter giả trên localhost, thực thi Python trong subprocess, kiểm tra cả TLS và backend echo. Lần rà soát này chưa có URL hay session Kaggle để đo GPU thực tế.
+**Mốc đối chiếu ngày 19/11/2026.** Đã thử trên Jupyter giả, ipykernel thật ở localhost và một phiên Kaggle T4. Kết quả cùng các phép thử còn mở nằm trong [kế hoạch nghiệm thu](PLAN.md).
 
-Các lệnh dưới đây dùng Bash trên Linux. Chạy từng khối theo thứ tự ở **terminal A trên máy cá nhân**. Chỉ bước HTTP cần thêm terminal B. Dùng notebook mới dành riêng cho phép thử vì các snippet quản trị hiện có thể ghi đè biến Python trong kernel. Nếu dừng ở bất kỳ bước nào, thực hiện bước 8 để trả tài nguyên.
+Các lệnh dùng Bash trên Linux. Chạy từng khối trong terminal A trên máy cá nhân. Bước HTTP cần thêm terminal B. Chọn notebook thử nghiệm cho các ca ngắt WS hoặc restart server.
 
 ## 1. Cài đặt và lập mốc local
 
-Mở terminal tại thư mục dự án chứa đủ các đường dẫn bên dưới. Nếu thiếu, lấy bản source đầy đủ trước khi cài. Tại thời điểm rà soát, commit HEAD chỉ chứa README. Chuẩn bị Python ≥ 3.10 có venv và pip, curl, cùng quyền mở cổng localhost cho test. pip có thể cần Internet để lấy build dependency.
+Mở terminal tại thư mục dự án chứa đủ các đường dẫn bên dưới. Nếu thiếu, lấy bản source đầy đủ trước khi cài. Chuẩn bị môi trường Python ≥ 3.10 có pip, curl, cùng quyền mở cổng localhost cho test. pip có thể cần Internet để lấy build dependency.
 
 ```bash
 ls pyproject.toml src/kgl/cli.py tests/fake_jupyter.py
-python3 -m venv .venv
-source .venv/bin/activate
+conda activate myenv                 # môi trường đã có trên máy chủ dự án
 python -m pip install -e .
 kgl --version
 set -o pipefail
 RUN=$(mktemp -d "$HOME/kgl-test.XXXXXX")
-export KGL_HOME="$RUN/session"
+export KGL_HOME="$RUN/session"       # lần thử độc lập, hoặc dùng lại thư mục session còn hiệu lực
 export KGL_WORKDIR=/kaggle/working KGL_CHUNK_KB=256
 printf 'Thu muc ket qua: %s\n' "$RUN"
 python -V
 PYTHONPATH=src python -m unittest discover -s tests -t . -v 2>&1 | tee "$RUN/local-tests.log"
 ```
 
-**Đạt** khi thấy `Ran 27 tests` và `OK` với source hiện tại. Nếu nhiều test cùng lỗi mở socket localhost, kiểm tra quyền mạng của môi trường chạy. Nếu máy local có NVIDIA GPU và riêng test `test_doctor_with_echo_backend` lỗi vì số bước FAIL là 0, kiểm tra assertion trong `tests/test_cli.py`: test hiện kỳ vọng máy chạy test thiếu GPU. Ghi nhận lỗi giả định môi trường của suite. Giữ terminal A mở để dùng tiếp các biến. Thư mục `session` chứa URL có quyền truy cập notebook, chỉ chia sẻ các báo cáo đã xem lại.
+**Đạt** khi unittest báo OK. Jupyter Server và ipykernel là dependency tùy chọn của bài test local với kernel thật; myenv trên máy hiện tại đã cài cả hai. Nếu thấy skipped, kiểm tra lý do trước khi kết luận.
+
+Để dùng lại phiên đã lưu trên máy hiện tại, đặt `export KGL_HOME="$HOME/kgl-test.XYuHCj/session"` rồi chạy `kgl exec --timeout 15 'print(2)'`. Nếu nhận được 2, tiếp tục bước 3. Khi URL hết hạn, thực hiện bước 2 và nhập lại qua stdin.
+
+### Thử nhanh bản sửa với session còn hiệu lực
+
+Tại thư mục dự án, dùng lệnh dưới đây sau khi đã kiểm tra session. Bài thử dùng thêm VRAM cho một Qwen 0.5B trên cổng và thư mục riêng của VM, rồi dừng instance do bài thử tạo. Nó giữ session notebook đang chạy. Báo cáo JSON ghi device/dtype, 20 request, độ trễ, kết quả ngắt WS sau chunk có nội dung và kết quả dừng server. Phép thử này cần mạng tới Kaggle và quyền tải hoặc cache model trên VM.
+
+```bash
+KGL_HOME="$HOME/kgl-test.XYuHCj/session" /home/iast-2/miniconda3/envs/myenv/bin/python -m tests.kaggle_smoke
+```
 
 ## 2. Lấy URL và chứng minh kết nối
 
 Tạo notebook Python trong tài khoản Kaggle của bạn, chọn accelerator GPU và khởi động session. Bật Internet nếu tải model từ Hugging Face, hoặc gắn sẵn thư mục model có tokenizer và weights. Trong notebook chọn **Run → Kaggle Jupyter Server → Manually Connect → VS Code Compatible URL**. Đây là luồng lấy URL mà Kaggle mô tả cho trình soạn thảo bên ngoài. Khả năng dùng URL đó với bản kgl của bạn được kiểm tra ngay bên dưới. [Tài liệu Kaggle](https://www.kaggle.com/docs/notebooks)
 
+Chạy riêng dòng sau trong Bash và nhấn Enter. Khi thấy lời nhắc, sao chép URL từ Kaggle, quay về terminal, dán bằng Ctrl+Shift+V hoặc chuột phải → Paste rồi nhấn Enter. Tùy chọn `-s` ẩn toàn bộ ký tự khi dán, kể cả dấu sao.
+
+```bash
+IFS= read -rsp 'Dan URL (an ky tu), roi nhan Enter: ' KGL_TEST_URL
+```
+
+Khi dấu nhắc shell trở lại, kiểm tra giá trị mà không in URL. Nếu kết quả là `0`, sao chép lại URL và chạy lại riêng dòng nhập trên.
+
+```bash
+printf 'Da nhan %s ky tu.\n' "${#KGL_TEST_URL}"
+```
+
+Khi độ dài lớn hơn 0, tiếp tục trong cùng terminal.
+
 ```bash
 kgl auth
-read -rsp 'Dan VS Code Compatible URL, roi nhan Enter: ' KGL_TEST_URL
-printf '\n'
 printf '%s\n' "$KGL_TEST_URL" | kgl connect --proxy-url -
 unset KGL_TEST_URL
 kgl exec --timeout 30 'print(1 + 1)'
 kgl status --json > "$RUN/status.json"
 ```
 
-**Đạt** khi connect hoàn tất, exec trả đúng `2` và trường `connection` trong JSON là `ok`. `auth` chỉ liệt kê credential hiện có. Dòng `connected` xuất hiện trước khi probe WebSocket hoàn tất. Nếu có nhiều kernel, chọn kernel notebook bằng `--kernel-id` khi connect. Với 401/403, lấy URL mới từ phiên còn chạy. Với 404, kiểm tra loại URL. Thử cùng URL trong VS Code để phân biệt lỗi phiên với lỗi xử lý URL của kgl. Nếu VS Code chạy cell được nhưng kgl lỗi, ghi mã HTTP và giai đoạn REST/WS/exec rồi dừng thử model.
+**Đạt** khi connect hoàn tất, exec trả đúng `2` và trường `connection` trong JSON là `ok`. `auth` chỉ liệt kê credential hiện có. Dòng `connected` xuất hiện sau khi probe kernel thành công. Nếu có nhiều kernel, chọn kernel notebook bằng `--kernel-id` khi connect. Với 401/403, lấy URL mới từ phiên còn chạy. Với 404, kiểm tra loại URL. Thử cùng URL trong VS Code để phân biệt lỗi phiên với lỗi xử lý URL của kgl. Nếu VS Code chạy cell được nhưng kgl lỗi, ghi mã HTTP và giai đoạn REST/WS/exec rồi dừng thử model.
 
 ## 3. Kiểm tra thực thi, trạng thái kernel và truyền file
 
@@ -95,7 +116,7 @@ kgl infer 'Name one planet.' --temperature 0 --max-tokens 32 --no-stream --json 
 kgl exec --shell 'p=$(cat /kaggle/working/.kgl/serve.pid); ps -p "$p" -o pid,args; nvidia-smi --query-compute-apps=pid,process_name,used_gpu_memory --format=csv' | tee "$RUN/gpu-process.txt"
 ```
 
-Với model gắn sẵn, đặt `MODEL` thành đường dẫn thư mục model trên VM. Trong `model-health.json` kiểm tra `state=ready`, `health.backend=transformers` và `health.model` đúng giá trị đã chọn. Kiểm tra cả hai câu trả lời có nội dung phù hợp, rồi đối chiếu PID của `serve.py` với PID trong bảng NVIDIA và VRAM đã cấp cho tiến trình. Đây là bằng chứng vận hành gián tiếp về GPU. Bản hiện tại chưa xuất device/dtype thực của trọng số. Nếu driver giấu PID, ghi **chưa xác minh device**. Nếu health trả echo hoặc model khác, đánh dấu FAIL, dừng server thử nghiệm và khởi động lại đúng model. Nếu khởi động lỗi trước khi CLI lưu server, xem log bằng `kgl exec --shell 'tail -n 50 /kaggle/working/.kgl/serve.log'`.
+Với model gắn sẵn, đặt `MODEL` thành đường dẫn thư mục model trên VM. Trong `model-health.json` kiểm tra `state=ready`, `health.backend=transformers` và `health.model` đúng giá trị đã chọn. Kiểm tra cả hai phản hồi đúng cấu trúc và có nội dung, rồi đối chiếu PID của `serve.py` với PID trong bảng NVIDIA và VRAM đã cấp cho tiến trình. Đây là bằng chứng vận hành gián tiếp về GPU. Bản mới còn trả `health.device`, `health.dtype` và `health.instance`. Ghi giá trị thực, ví dụ `cuda:0` và `torch.float16`. Nếu health trả echo hoặc model khác, đánh dấu FAIL, dừng server thử nghiệm và khởi động lại đúng model. Nếu khởi động lỗi trước khi CLI lưu server, xem log bằng `kgl exec --shell 'tail -n 50 /kaggle/working/.kgl/serve.log'`.
 
 ## 6. Gọi API local từ ứng dụng
 
@@ -105,7 +126,7 @@ Tại A chạy proxy và giữ nó ở foreground. Ví dụ dùng loopback và c
 KGL_PROXY_KEY='' kgl serve proxy --listen 127.0.0.1:8001
 ```
 
-Tại **terminal B trên cùng máy**, chạy cả hai request. Terminal B chỉ cần curl.
+Tại **terminal B trên cùng máy**, kiểm tra `curl -i --max-time 10 http://127.0.0.1:8001/ready` trước khi chạy cả hai request. Readiness trả 200 khi đúng model và instance đã sẵn sàng; mã 503 hoặc timeout cần chẩn đoán tiếp. Terminal B chỉ cần curl.
 
 ```bash
 curl --fail-with-body --max-time 120 -sS http://127.0.0.1:8001/v1/chat/completions \

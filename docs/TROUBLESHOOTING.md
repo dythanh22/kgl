@@ -2,8 +2,12 @@
 
 | Triệu chứng | Nguyên nhân có thể | Cách xử lý |
 |---|---|---|
+| Terminal giữ nguyên sau `kgl serve proxy` | Proxy đang phục vụ ở foreground | Giữ terminal A mở. Ở B chạy `curl --max-time 5 http://127.0.0.1:8001/health`, sau đó gửi một chat request ngắn theo [bước 6](TESTING.md). Ctrl-C ở A dừng proxy local |
+| Start báo legacy server | Server còn chạy bằng phiên bản cũ | Khi sẵn sàng ngắt dịch vụ cũ, chạy `kgl serve stop`, sau đó `kgl serve start` lại và mở lại proxy local bằng CLI mới |
+| Local health OK nhưng chat lỗi hoặc treo | Local health chỉ kiểm tra tiến trình proxy | Thử `curl -i --max-time 10 http://127.0.0.1:8001/ready`. Trong terminal dùng cùng KGL_HOME, chạy `kgl exec --timeout 30 'print(2)'`. Nếu thành công, kiểm tra `kgl serve status`, backend/model và log. Ghi rõ lần cuối nhận chunk và có nhận dấu kết thúc hay chưa |
+| Stream đứt giữa câu | WS hoặc worker có thể đã mất sau khi phát nội dung | Giữ phần đã nhận cùng thời điểm lỗi. Kiểm tra kết nối và thử một request mới. Nếu cần thử lại, tạo phản hồi mới riêng biệt để tránh ghép trùng prefix |
 | `connection error: ... cannot reach` | URL sai, mạng, proxy hết hạn | Kiểm tra phiên notebook còn chạy; lấy URL mới; `kgl -v connect ...` |
-| `HTTP 403/401 ... expired or not accepted` | Token hết hạn/phiên mới | Khởi động lại phiên, lấy URL mới, `kgl connect` lại; thử `--header "Cookie: ..."` nếu proxy yêu cầu (chưa kiểm chứng) |
+| `HTTP 403/401 ... expired or not accepted` | Token hết hạn/phiên mới | Kiểm tra phiên đang chạy, sao chép lại VS Code Compatible URL từ panel Kaggle Jupyter Server và connect qua stdin |
 | `HTTP 404 ... does not look like a Jupyter server base URL` | URL không phải gốc Jupyter | Thử cắt bớt/đổi path; báo lại định dạng URL thực tế để tôi hỗ trợ |
 | `WebSocket upgrade refused (HTTP xxx)` | Proxy chặn WS hoặc thiếu header | Ghi lại mã HTTP; xem `-v`; có thể cần header bổ sung |
 | `kernel not found` / `KernelGone` | Phiên Kaggle đã kết thúc/khởi động lại | `kgl connect` lại; `kgl serve start` lại (VM mới) |

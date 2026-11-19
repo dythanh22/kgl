@@ -27,7 +27,7 @@ Agent / app / terminal
 
 | Module | Vai trò |
 |---|---|
-| `ws.py` | WebSocket client stdlib; buffer riêng nên timeout không mất dữ liệu; ping/pong; wss |
+| `ws.py` | WebSocket client stdlib; buffer giữ byte của frame đang đọc, giữ các fragment qua timeout; ping/pong; wss |
 | `jupyter.py` | `Endpoint` (giữ `?token=` của URL), REST kernels, `KernelChannel.execute` (idle/total timeout, keep-alive ping) |
 | `runtime.py` | Giữ channel, kết nối lười, chính sách retry (xem dưới) |
 | `remote.py` | Mã chạy trên VM + giao thức marker `@@KGL@@{json}` để trả dữ liệu có cấu trúc trong stdout |
@@ -45,8 +45,9 @@ Agent / app / terminal
 
 ## Chính sách retry / mất kết nối
 
-- Lỗi khi mở kết nối hoặc *gửi*: thử lại một lần (chưa có gì chạy).
-- Mất kết nối *sau khi gửi*: **không** thử lại trừ khi thao tác idempotent (inference) – tránh chạy code hai lần.
+- Lỗi trước khi gửi được thử lại một lần. Lỗi trong lúc ghi có thể đã tới kernel; với exec hoặc inference, caller nhận lỗi kết quả thực thi chưa xác định. Thời gian chờ lock được tính trong deadline của request.
+- SSE chỉ phát `[DONE]` sau khi server trên VM báo hoàn tất. Với lỗi upstream sau khi stream đã mở, proxy phát event lỗi khi client còn nhận dữ liệu được. Request mới sẽ mở lại channel sau khi WS đứt.
+- `/health` của proxy local kiểm tra liveness. `/ready` kiểm tra kernel qua REST, execute qua WS, remote health và cấu hình phiên. Với Transformers, tiêu chí GPU là device CUDA. Mỗi instance mới có định danh riêng gắn với PID, thời điểm tạo tiến trình và tham số khởi động.
 - Timeout: đóng channel (trạng thái stream không xác định), lần gọi sau mở channel mới.
 - Kernel biến mất → `KernelGone` → `kgl connect` lại.
 - Ctrl-C trong `kgl exec` → `POST /api/kernels/<id>/interrupt`.
