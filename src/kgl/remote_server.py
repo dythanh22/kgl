@@ -3,12 +3,15 @@
 
 It is reached from your machine through Jupyter messaging (kgl infer /
 kgl serve proxy) - it is never exposed to the internet by kgl.
-Stdlib only, except the 'transformers' backend (torch + transformers,
-preinstalled on Kaggle images - unverified).
+The echo backend uses the standard library. Model backends load dependencies
+from the notebook environment.
 """
 import argparse
+import base64
 from collections import deque
 from contextlib import closing
+import importlib.util
+import io
 import json
 import math
 from queue import Empty
@@ -18,6 +21,84 @@ import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+
+MAX_REQUEST_BYTES = 512 * 1024
+MAX_IMAGE_BYTES = 350 * 1024
+MAX_IMAGE_PIXELS = 16_000_000
+
+
+def image_bytes(req):
+    if not isinstance(req, dict) or not isinstance(req.get("image"), str):
+        raise ValueError("image must be a base64 string")
+    data = base64.b64decode(req["image"], validate=True)
+    if not 0 < len(data) <= MAX_IMAGE_BYTES:
+        raise ValueError("image must be between 1 byte and 350 KiB")
+    return data
+
+
+class ImageBackend:
+    name = "image-classification"
+    device = None
+    devices = []
+    dtype = None
+
+    def __init__(self, model_id, predictor, require_gpu):
+        self.model_id = model_id
+        self.predictor = predictor
+        self.require_gpu = require_gpu
+
+    def load(self):
+        import torch
+        from PIL import Image
+
+        use_cuda = torch.cuda.is_available()
+        if self.require_gpu and not use_cuda:
+            raise RuntimeError("CUDA is required but unavailable")
+        self.device = "cuda:0" if use_cuda else "cpu"
+        self.devices = [self.device]
+        if self.predictor:
+            path = Path(self.predictor)
+            spec = importlib.util.spec_from_file_location("kgl_predictor", path)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            sys.path.insert(0, str(path.parent))
+            spec.loader.exec_module(module)
+            self.model = module.load(self.model_id, self.device)
+            self.predict = module.predict
+            if not callable(self.predict):
+                raise TypeError("predictor must define predict(model, image)")
+        else:
+            from transformers import pipeline
+
+            self.model = pipeline("image-classification", model=self.model_id, device=0 if use_cuda else -1)
+            self.predict = lambda model, image: model(image, top_k=3)
+        self.image = Image
+        self.inference_mode = torch.inference_mode
+
+    def decode(self, data):
+        try:
+            with self.image.open(io.BytesIO(data), formats=("JPEG", "PNG")) as image:
+                if image.width * image.height > MAX_IMAGE_PIXELS:
+                    raise ValueError("image exceeds 16 megapixels")
+                return image.convert("RGB")
+        except (OSError, self.image.DecompressionBombError) as exc:
+            raise ValueError("image must be a valid JPEG or PNG") from exc
+
+    def classify(self, image):
+        with self.inference_mode():
+            predictions = self.predict(self.model, image)
+        if not isinstance(predictions, list) or any(
+            not isinstance(item, dict) or not isinstance(item.get("label"), str)
+            or type(item.get("score")) not in (int, float) or not 0 <= item["score"] <= 1
+            for item in predictions
+        ):
+            raise ValueError("predict must return a list of labels and numeric scores between 0 and 1")
+        result = {"model": self.model_id, "predictions": predictions}
+        if len(json.dumps(result, allow_nan=False).encode()) > MAX_REQUEST_BYTES:
+            raise ValueError("prediction result exceeds 512 KiB")
+        return result
 
 
 def parse_device_map(value):
@@ -302,20 +383,23 @@ def make_handler(backend, model_id, state, instance=None):
                     return self._json(404 if stopped is None else 200, {"cancelled": stopped is True})
                 cancelled = active.finished.wait(2) and active.worker_stopped
                 return self._json(200 if cancelled else 202, {"cancelled": cancelled})
-            if self.path == "/internal/chat/completions" and (
+            is_image = isinstance(backend, ImageBackend)
+            if self.path in ("/internal/chat/completions", "/internal/predict") and (
                     not instance or self.headers.get("X-Kgl-Instance") != instance):
                 return self._json(409, {"error": {"message": "server instance is required"}})
-            if self.path not in ("/v1/chat/completions", "/internal/chat/completions"):
+            routes = ("/internal/predict",) if is_image else ("/v1/chat/completions", "/internal/chat/completions")
+            if self.path not in routes:
                 return self._json(404, {"error": {"message": "not found"}})
             if state.status != "ready" or getattr(backend, "failure", None):
                 failure = getattr(backend, "failure", None) or state.error or state.status
                 return self._json(503, {"error": {"message": f"model unavailable: {failure}"}})
             try:
                 n = int(self.headers.get("Content-Length", "0"))
-                if not 0 < n <= 1024 * 1024:
+                limit = MAX_REQUEST_BYTES if is_image else 1024 * 1024
+                if not 0 < n <= limit:
                     raise ValueError("invalid request size")
                 req = json.loads(self.rfile.read(n))
-                args = chat_args(req, model_id)
+                args = image_bytes(req) if is_image else chat_args(req, model_id)
                 timeout = float(self.headers.get("X-Kgl-Timeout", "600"))
                 if not math.isfinite(timeout) or timeout <= 0:
                     raise ValueError("invalid inference timeout")
@@ -327,6 +411,16 @@ def make_handler(backend, model_id, state, instance=None):
                     return self._json(503, {"error": {"message": "generation worker busy"}})
                 state.active = generation
             try:
+                if is_image:
+                    try:
+                        image = backend.decode(args)
+                    except ValueError as exc:
+                        return self._json(400, {"error": {"message": str(exc)}})
+                    try:
+                        result = backend.classify(image)
+                    except Exception as exc:
+                        return self._json(500, {"error": {"message": f"prediction failed: {exc}"}})
+                    return self._json(200, result)
                 try:
                     options = ({"inputs": backend.prepare(args[0], args[1])}
                                if isinstance(backend, TransformersBackend) else {})
@@ -410,7 +504,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--instance")
     ap.add_argument("--model", default="Qwen/Qwen2.5-0.5B-Instruct")
-    ap.add_argument("--backend", choices=["transformers", "echo"], default="transformers")
+    ap.add_argument("--backend", choices=["transformers", "echo", "image-classification"], default="transformers")
+    ap.add_argument("--predictor", help="absolute VM path to a Python classifier")
     ap.add_argument("--dtype", choices=["auto", "float16", "bfloat16", "float32"], default="float16")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
@@ -418,15 +513,21 @@ def main():
     ap.add_argument("--device-map")
     ap.add_argument("--prefill-chunk-size", type=int)
     a = ap.parse_args()
-    if a.require_gpu and a.backend != "transformers":
-        ap.error("--require-gpu requires the transformers backend")
+    if a.require_gpu and a.backend == "echo":
+        ap.error("--require-gpu requires a model backend")
+    if a.predictor and (a.backend != "image-classification" or not Path(a.predictor).is_absolute()):
+        ap.error("--predictor requires the image-classification backend and an absolute VM path")
     if a.device_map and a.backend != "transformers":
         ap.error("--device-map requires the transformers backend")
     if a.prefill_chunk_size is not None and (a.prefill_chunk_size <= 0 or a.backend != "transformers"):
         ap.error("--prefill-chunk-size requires a positive integer and the transformers backend")
     try:
-        backend = (EchoBackend() if a.backend == "echo"
-                   else TransformersBackend(a.model, a.dtype, a.require_gpu, a.device_map, a.prefill_chunk_size))
+        if a.backend == "echo":
+            backend = EchoBackend()
+        elif a.backend == "image-classification":
+            backend = ImageBackend(a.model, a.predictor, a.require_gpu)
+        else:
+            backend = TransformersBackend(a.model, a.dtype, a.require_gpu, a.device_map, a.prefill_chunk_size)
     except ValueError as exc:
         ap.error(str(exc))
 

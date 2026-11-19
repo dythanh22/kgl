@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kgl model demo</title>
+<style>
+  :root { color-scheme: dark; font: 16px/1.55 Inter, system-ui, sans-serif; background: #101518; color: #edf4f3 }
+  * { box-sizing: border-box }
+  body { margin: 0; padding: clamp(1rem, 6vw, 5rem) 1rem }
+  main { max-width: 42rem; margin: auto }
+  h1 { font-size: clamp(2rem, 7vw, 3.25rem); line-height: 1.1; margin: 0 0 1.25rem }
+  .connection, form, section { padding: 1.25rem; border: 1px solid #38464a; border-radius: 1rem; background: #192225; margin-bottom: 1rem }
+  .connection { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem }
+  #status, #model { overflow-wrap: anywhere }
+  #status { margin: 0; color: #c8ded9 }
+  #model { margin: 0 0 1rem; color: #a9c4bf }
+  label { display: block; font-weight: 600; margin-bottom: .5rem }
+  textarea, input { display: block; width: 100%; margin-bottom: 1rem; font: inherit }
+  textarea, input[type=password] { background: #11191b; color: inherit; border: 1px solid #566763; border-radius: .5rem; padding: .65rem }
+  textarea { resize: vertical; min-height: 8rem }
+  button { font: inherit; font-weight: 700; padding: .55rem .9rem; border-radius: .5rem; border: 0; color: #102019; background: #a0e9cb; cursor: pointer }
+  button:disabled { opacity: .55; cursor: default }
+  #refresh { background: #344744; color: #e6f4ee }
+  h2 { font-size: 1rem; margin-top: 0 }
+  #output { white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 0 }
+</style>
+<main>
+  <h1 id="title">kgl model demo</h1>
+  <p id="model" hidden></p>
+  <div class="connection">
+    <p id="status" role="status">Checking model…</p>
+    <button id="refresh" type="button">Check connection</button>
+  </div>
+  <div id="auth" hidden>
+    <label for="key">Proxy API key</label>
+    <input id="key" type="password" autocomplete="off">
+  </div>
+  <form id="form" hidden>
+    <div id="chat" hidden>
+      <label for="prompt">Question</label>
+      <textarea id="prompt"></textarea>
+    </div>
+    <div id="vision" hidden>
+      <label for="image">Image (JPEG or PNG, up to 350 KiB)</label>
+      <input id="image" type="file" accept="image/jpeg,image/png">
+    </div>
+    <button id="run" type="submit" disabled>Run</button>
+  </form>
+  <section id="result" hidden aria-label="Result">
+    <h2 id="result-title">Result</h2>
+    <p id="output"></p>
+  </section>
+</main>
+<script>
+  const byId = id => document.getElementById(id);
+  const status = byId("status");
+  const run = byId("run");
+  const refresh = byId("refresh");
+  const output = byId("output");
+  let vision = false;
+
+  function headers() {
+    const key = byId("key").value;
+    return key ? {"Authorization": "Bearer " + key} : {};
+  }
+
+  function showError(error) {
+    const message = error instanceof TypeError
+      ? "Local proxy unavailable. Check the proxy terminal."
+      : error.message;
+    const hint = /cuda.*out of memory|outofmemoryerror/i.test(message)
+      ? " Try a smaller model or restart the worker with more GPU memory available."
+      : "";
+    status.textContent = message + hint;
+  }
+
+  async function check() {
+    run.disabled = refresh.disabled = true;
+    status.textContent = "Checking model…";
+    try {
+      const response = await fetch("/ready", {headers: headers()});
+      const data = await response.json();
+      const health = data.health || data.last_health;
+      if (response.status === 401) {
+        byId("auth").hidden = false;
+        throw new Error("Enter your proxy API key, then check the connection.");
+      }
+      if (data.state === "busy") throw new Error("Worker busy. Check again after the current request.");
+      if (health?.status === "error") throw new Error(health.error + " See kgl serve logs.");
+      if (data.state === "loading") throw new Error("Loading model. Check again in a moment.");
+      if (data.state === "down") throw new Error("Worker unavailable. Check kgl serve status and kgl serve logs.");
+      if (!response.ok) {
+        const detail = data.error?.message || "Worker identity or device does not match.";
+        throw new Error(detail + " Check kgl status and reconnect if the Kaggle session ended.");
+      }
+      vision = health.backend === "image-classification";
+      byId("title").textContent = vision ? "Image classification" : "Model chat";
+      const model = byId("model");
+      model.textContent = health.model + " · " + health.device;
+      model.hidden = false;
+      byId("chat").hidden = vision;
+      byId("vision").hidden = !vision;
+      byId("form").hidden = false;
+      status.textContent = "Ready";
+      run.textContent = vision ? "Classify image" : "Send question";
+      run.disabled = false;
+    } catch (error) {
+      showError(error);
+    } finally {
+      refresh.disabled = false;
+    }
+  }
+
+  function readImage(file) {
+    if (!file || file.size === 0 || file.size > 350 * 1024) {
+      throw new Error("Choose a JPEG or PNG between 1 byte and 350 KiB.");
+    }
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(",", 2)[1]);
+      reader.onerror = () => reject(new Error("Could not read the selected file."));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function readChat(response) {
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = "";
+    try {
+      while (true) {
+        const {value, done} = await reader.read();
+        if (done) throw new Error("The reply ended early. Check the connection before retrying.");
+        buffer += value;
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          const text = line.slice(5).trim();
+          if (text === "[DONE]") return;
+          const event = JSON.parse(text);
+          if (event.error) throw new Error(event.error.message);
+          output.textContent += event.choices?.[0]?.delta?.content || "";
+        }
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
+  }
+
+  byId("form").addEventListener("submit", async event => {
+    event.preventDefault();
+    run.disabled = refresh.disabled = true;
+    output.textContent = "";
+    byId("result").hidden = true;
+    try {
+      const prompt = byId("prompt").value.trim();
+      if (!vision && !prompt) throw new Error("Enter a question.");
+      const payload = vision ? {image: await readImage(byId("image").files[0])}
+        : {messages: [{role: "user", content: prompt}], max_tokens: 256, stream: true};
+      status.textContent = "Running inference…";
+      const response = await fetch(vision ? "/predict" : "/v1/chat/completions", {
+        method: "POST", headers: {...headers(), "Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        const {error} = await response.json();
+        const hint = response.status === 503 ? " Check the connection before retrying." : "";
+        const message = error?.message || "Inference failed.";
+        throw new Error(message + hint);
+      }
+      byId("result").hidden = false;
+      byId("result-title").textContent = vision ? "Predictions" : "Reply";
+      if (vision) {
+        const {predictions} = await response.json();
+        output.textContent = predictions.map(item => item.label + " · " + (item.score * 100).toFixed(1) + "%").join("\n")
+          || "No predictions returned.";
+      } else {
+        await readChat(response);
+        if (!output.textContent) output.textContent = "The model returned an empty reply.";
+      }
+      status.textContent = "Ready";
+    } catch (error) {
+      showError(error);
+    } finally {
+      run.disabled = refresh.disabled = false;
+    }
+  });
+  refresh.addEventListener("click", check);
+  check();
+</script>
+</html>

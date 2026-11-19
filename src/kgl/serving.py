@@ -21,13 +21,13 @@ from typing import Callable
 from .errors import ConnectionLost, KernelGone, KglError, ProtocolError, ServeError
 from .remote import (CANCEL_INFER, INFER, SERVE_HEALTH, SERVE_LOGS, SERVE_START, SERVE_STOP,
                      MarkerParser, new_marker, render)
-from .remote_server import chat_args, parse_device_map
+from .remote_server import MAX_REQUEST_BYTES, chat_args, image_bytes, parse_device_map
 from .runtime import Runtime
 from .files import upload_file
 
 log = logging.getLogger("kgl.serving")
 SERVER_SCRIPT = Path(__file__).with_name("remote_server.py")
-MAX_CHAT_BYTES = 512 * 1024
+MAX_CHAT_BYTES = MAX_REQUEST_BYTES
 
 
 class ServeManager:
@@ -38,10 +38,13 @@ class ServeManager:
     def start(self, model: str, backend: str = "transformers", dtype: str = "float16",
               wait: bool = True, wait_timeout: float = 900.0,
               progress: Callable[[str], None] | None = None, require_gpu: bool = False,
-              device_map: str | None = None, prefill_chunk_size: int | None = None) -> dict:
+              device_map: str | None = None, prefill_chunk_size: int | None = None,
+              predictor: str | None = None) -> dict:
         say = progress or (lambda s: None)
-        if require_gpu and backend != "transformers":
-            raise ServeError("--require-gpu requires the transformers backend")
+        if require_gpu and backend == "echo":
+            raise ServeError("--require-gpu requires a model backend")
+        if predictor is not None and (backend != "image-classification" or not posixpath.isabs(predictor)):
+            raise ServeError("--predictor requires the image-classification backend and an absolute VM path")
         if device_map is not None:
             if backend != "transformers":
                 raise ServeError("--device-map requires the transformers backend")
@@ -57,6 +60,8 @@ class ServeManager:
                 "--port", str(self.port)]
         if require_gpu:
             args.append("--require-gpu")
+        if predictor is not None:
+            args.extend(["--predictor", predictor])
         if device_map:
             args.extend(["--device-map", device_map])
         if prefill_chunk_size is not None:
@@ -134,12 +139,15 @@ class InferResult:
 def infer_chat(rt: Runtime, port: int, payload: dict,
                on_chunk: Callable[[dict], None] | None = None,
                timeout: float = 600.0, *, expected_instance: str | None = None,
-               check_client=None, on_cancel: Callable[[bool], None] | None = None) -> InferResult:
-    """Send an OpenAI-style chat request to the VM server via the kernel."""
+               check_client=None, on_cancel: Callable[[bool], None] | None = None,
+               predict: bool = False) -> InferResult:
+    """Send an inference request to the VM server via the kernel."""
     res = InferResult()
     t0 = time.monotonic()
     pieces: list[str] = []
     instance = expected_instance or (rt.session.serve or {}).get("instance")
+    if predict and not instance:
+        raise ServeError("server instance is missing; restart the model server")
     request_id = uuid.uuid4().hex
     got_status = False
     submitted = False
@@ -172,11 +180,12 @@ def infer_chat(rt: Runtime, port: int, payload: dict,
 
     data = json.dumps(payload, ensure_ascii=False).encode()
     if len(data) > MAX_CHAT_BYTES:
-        raise ServeError("chat request exceeds 512 KiB")
+        raise ServeError("inference request exceeds 512 KiB")
     marker = new_marker()
     parser = MarkerParser(handle, marker=marker)
     code = render(INFER, marker=marker, PAYLOAD=base64.b64encode(data).decode(),
-                  PORT=port, TIMEOUT=timeout, OPTIONS={"instance": instance, "request_id": request_id})
+                  PORT=port, TIMEOUT=timeout,
+                  OPTIONS={"instance": instance, "request_id": request_id, "predict": predict})
     try:
         rt.run(code, lambda name, text: parser.feed(text) if name == "stdout" else None,
                total_timeout=timeout, check=True, check_client=check_client, on_submit=mark_submitted)
@@ -204,6 +213,8 @@ def infer_chat(rt: Runtime, port: int, payload: dict,
     if not got_status:
         raise ProtocolError("inference ended without a result marker")
     res.latency_s = time.monotonic() - t0
+    if predict:
+        return res
     if res.body:
         res.text = (res.body.get("choices") or [{}])[0].get("message", {}).get("content", "")
     else:
@@ -212,7 +223,7 @@ def infer_chat(rt: Runtime, port: int, payload: dict,
 
 
 def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | None,
-                       listen_host: str = "127.0.0.1"):
+                       listen_host: str = "127.0.0.1", demo_page: bytes | None = None):
     last_health = None
     admission = threading.Lock()
 
@@ -269,6 +280,15 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
                 return
             if self.path == "/health":
                 return self._json(200, {"status": "ok"})
+            if self.path == "/" and demo_page is not None:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(demo_page)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Frame-Options", "DENY")
+                self.end_headers()
+                self.wfile.write(demo_page)
+                return
             if not self._authorized():
                 return
             if self.path == "/ready":
@@ -295,7 +315,8 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
                 ready = (result["state"] == "ready" and health.get("model") == model_name
                          and health.get("backend") == expected.get("backend", health.get("backend"))
                          and health.get("instance") == expected.get("instance", health.get("instance"))
-                         and (health.get("backend") == "echo" or str(health.get("device")).startswith("cuda")))
+                         and (health.get("backend") in ("echo", "image-classification")
+                              or str(health.get("device")).startswith("cuda")))
                 return self._json(200 if ready else 503, result)
             if self.path in ("/v1/models", "/models"):
                 return self._json(200, {"object": "list",
@@ -305,8 +326,11 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
         def do_POST(self):
             if not self._valid_host() or not self._authorized():
                 return
-            if self.path not in ("/v1/chat/completions", "/chat/completions"):
-                return self._err(404, "only /v1/chat/completions is supported")
+            predict = self.path == "/predict"
+            image_backend = (rt.session.serve or {}).get("backend") == "image-classification"
+            if (not predict and self.path not in ("/v1/chat/completions", "/chat/completions")
+                    or predict != image_backend):
+                return self._err(404, "route unavailable for the active backend")
             if self.headers.get_content_type() != "application/json":
                 return self._err(415, "Content-Type must be application/json", "invalid_request_error")
             try:
@@ -315,16 +339,19 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
                     raise ValueError("a single Content-Length is required")
                 length = int(lengths[0])
                 if length > MAX_CHAT_BYTES:
-                    return self._err(413, "chat request exceeds 512 KiB", "invalid_request_error")
+                    return self._err(413, "request exceeds 512 KiB", "invalid_request_error")
                 if length <= 0:
-                    raise ValueError("chat request cannot be empty")
+                    raise ValueError("request cannot be empty")
                 req = json.loads(self.rfile.read(length))
-                chat_args(req, model_name)
+                if predict:
+                    image_bytes(req)
+                else:
+                    chat_args(req, model_name)
             except (ValueError, RecursionError) as exc:
                 return self._err(400, str(exc), "invalid_request_error")
             except TimeoutError:
                 return self._err(408, "timed out reading request body", "invalid_request_error")
-            stream = req.get("stream") is True
+            stream = not predict and req.get("stream") is True
             started = False
 
             def on_chunk(obj: dict) -> None:
@@ -353,11 +380,13 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
                     raise BrokenPipeError("HTTP client disconnected")
 
             try:
-                req.setdefault("model", model_name)
+                if not predict:
+                    req.setdefault("model", model_name)
                 if not admission.acquire(blocking=False):
                     return self._err(503, "inference already running", "worker_busy")
                 try:
-                    r = infer_chat(rt, port, req, on_chunk if stream else None, check_client=check_client)
+                    options = {"predict": True} if predict else {}
+                    r = infer_chat(rt, port, req, on_chunk if stream else None, check_client=check_client, **options)
                 finally:
                     admission.release()
             except (ConnectionLost, KernelGone) as e:
@@ -388,7 +417,8 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
 
 
 def make_proxy_server(rt: Runtime, port: int, model_name: str, host: str = "127.0.0.1",
-                      listen_port: int = 8001, api_key: str | None = None) -> ThreadingHTTPServer:
+                      listen_port: int = 8001, api_key: str | None = None,
+                      *, demo: bool = False) -> ThreadingHTTPServer:
     if host.lower() == "localhost":
         host = "127.0.0.1"
     try:
@@ -397,7 +427,10 @@ def make_proxy_server(rt: Runtime, port: int, model_name: str, host: str = "127.
         loopback = False
     if not loopback and not api_key:
         raise ServeError("binding the proxy outside loopback requires KGL_PROXY_KEY or --api-key")
+    if demo and not loopback:
+        raise ServeError("--demo requires a loopback address")
+    demo_page = Path(__file__).with_name("demo.html").read_bytes() if demo else None
     srv = ThreadingHTTPServer((host, listen_port),
-                              make_proxy_handler(rt, port, model_name, api_key, host))
+                              make_proxy_handler(rt, port, model_name, api_key, host, demo_page))
     srv.daemon_threads = True
     return srv

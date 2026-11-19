@@ -18,4 +18,4 @@ kgl = "kgl.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-kgl = ["remote_server.py"]
+kgl = ["remote_server.py", "demo.html"]

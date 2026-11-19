@@ -272,10 +272,13 @@ def cmd_serve(a, st: Settings, store: SessionStore) -> int:
     try:
         if a.serve_cmd == "start":
             mgr = ServeManager(rt, a.port)
-            h = mgr.start(a.model, a.backend, a.dtype, wait=not a.no_wait,
+            model = a.model or ("google/vit-base-patch16-224" if a.backend == "image-classification"
+                                else "Qwen/Qwen2.5-0.5B-Instruct")
+            h = mgr.start(model, a.backend, a.dtype, wait=not a.no_wait,
                           wait_timeout=a.wait_timeout, progress=eprint, require_gpu=a.require_gpu,
-                          device_map=a.device_map, prefill_chunk_size=a.prefill_chunk_size)
-            s.serve = {"port": a.port, "model": a.model if a.backend != "echo" else "echo",
+                          device_map=a.device_map, prefill_chunk_size=a.prefill_chunk_size,
+                          predictor=a.predictor)
+            s.serve = {"port": a.port, "model": model if a.backend != "echo" else "echo",
                        "backend": a.backend, "instance": h.get("health", h)["instance"]}
             store.save(s, expected=s)
             print("model server ready" if not a.no_wait else "model server launching")
@@ -310,10 +313,14 @@ def cmd_serve(a, st: Settings, store: SessionStore) -> int:
             host, _, port = a.listen.rpartition(":")
             key = a.api_key or os.environ.get("KGL_PROXY_KEY")
             srv = make_proxy_server(rt, s.serve["port"], s.serve["model"], host or "127.0.0.1",
-                                    int(port), key)
-            eprint(f"OpenAI-compatible endpoint: http://{host or '127.0.0.1'}:{port}/v1 "
+                                    int(port), key, demo=a.demo)
+            url = f"http://{host or '127.0.0.1'}:{port}"
+            endpoint = "/predict" if s.serve.get("backend") == "image-classification" else "/v1"
+            eprint(f"Model endpoint: {url}{endpoint} "
                    f"(model={s.serve['model']}, auth={'on' if key else 'off'}); Ctrl-C to stop.\n"
                    "Keep this terminal open and send requests from a second terminal.")
+            if a.demo:
+                eprint(f"Open the demo at {url}/")
             try:
                 srv.serve_forever()
             except KeyboardInterrupt:
@@ -329,6 +336,8 @@ def cmd_infer(a, st: Settings, store: SessionStore) -> int:
     rt, s = _runtime(st, store)
     if not s.serve:
         raise KglError("no model server recorded; run `kgl serve start` first")
+    if s.serve.get("backend") == "image-classification":
+        raise ServeError("use POST /predict or `kgl serve proxy --demo` for image classification")
     if not s.serve.get("instance"):
         raise ServeError("server instance is missing; run kgl serve stop and kgl serve start")
     prompt = " ".join(a.prompt) if a.prompt else sys.stdin.read()
@@ -451,8 +460,9 @@ def build_parser() -> argparse.ArgumentParser:
     sv = sub.add_parser("serve", help="manage the model server on the VM")
     ss = sv.add_subparsers(dest="serve_cmd", required=True)
     st_ = ss.add_parser("start")
-    st_.add_argument("--model", default="Qwen/Qwen2.5-0.5B-Instruct")
-    st_.add_argument("--backend", choices=["transformers", "echo"], default="transformers")
+    st_.add_argument("--model", help="Hub model ID or checkpoint path on the VM")
+    st_.add_argument("--backend", choices=["transformers", "echo", "image-classification"], default="transformers")
+    st_.add_argument("--predictor", help="absolute VM path to a Python image classifier")
     st_.add_argument("--dtype", choices=["auto", "float16", "bfloat16", "float32"], default="float16")
     st_.add_argument("--port", type=int, default=8000, help="VM-local port")
     st_.add_argument("--no-wait", action="store_true")
@@ -464,9 +474,10 @@ def build_parser() -> argparse.ArgumentParser:
     ss.add_parser("status")
     lg = ss.add_parser("logs")
     lg.add_argument("-n", "--lines", type=int, default=50)
-    px = ss.add_parser("proxy", help="local OpenAI-compatible endpoint backed by the VM server")
+    px = ss.add_parser("proxy", help="serve the active model through a local HTTP endpoint")
     px.add_argument("--listen", default="127.0.0.1:8001")
     px.add_argument("--api-key", help="require this Bearer key (or $KGL_PROXY_KEY)")
+    px.add_argument("--demo", action="store_true", help="serve a browser demo on loopback")
     sv.set_defaults(fn=cmd_serve)
 
     i = sub.add_parser("infer", help="send one chat prompt to the model on the VM")

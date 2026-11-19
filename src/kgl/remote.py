@@ -307,8 +307,8 @@ except Exception as e:
 INFER = '''
 import base64, json, urllib.request, urllib.error
 payload = base64.b64decode(__PAYLOAD__)
-stream = json.loads(payload).get("stream") is True
 options = __OPTIONS__
+stream = not options.get("predict") and json.loads(payload).get("stream") is True
 headers = {"Content-Type": "application/json", "X-Kgl-Timeout": str(__TIMEOUT__)}
 if options.get("request_id"):
     headers["X-Kgl-Request-Id"] = options["request_id"]
@@ -316,7 +316,7 @@ instance = options.get("instance")
 route = "/v1/chat/completions"
 if instance:
     headers["X-Kgl-Instance"] = instance
-    route = "/internal/chat/completions"
+    route = "/internal/predict" if options.get("predict") else "/internal/chat/completions"
 req = urllib.request.Request(f"http://127.0.0.1:{__PORT__}" + route, data=payload, headers=headers)
 try:
     with urllib.request.urlopen(req, timeout=__TIMEOUT__) as r:

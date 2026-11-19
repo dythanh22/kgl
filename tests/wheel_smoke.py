@@ -24,6 +24,7 @@ def main():
         pip("wheel", "--no-deps", "--no-build-isolation", "--no-index", str(source))
         target = work / "install"
         pip("install", "--no-index", "--no-deps", "--target", str(target), str(next(work.glob("*.whl"))))
+        assert (target / "kgl" / "demo.html").is_file()
         env = dict(os.environ, PYTHONPATH=str(target), KGL_HOME=str(work / "home"),
                    KGL_WORKDIR=str(work / "remote"))
         def cli(*args, data=""):
