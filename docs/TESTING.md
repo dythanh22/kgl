@@ -2,23 +2,23 @@
 
 **Câu hỏi nghiệm thu:** Từ máy cá nhân, bạn có nhận được câu trả lời của đúng model trên GPU Kaggle, nhận đủ stream, và gửi được yêu cầu tiếp theo sau gián đoạn không?
 
-**Mốc đối chiếu ngày 19/11/2026.** Đã thử trên Jupyter giả, ipykernel thật ở localhost và một phiên Kaggle T4. Kết quả cùng các phép thử còn mở nằm trong [kế hoạch nghiệm thu](PLAN.md).
 
 Các lệnh dùng Bash trên Linux. Chạy từng khối trong terminal A trên máy cá nhân. Bước HTTP cần thêm terminal B. Chọn notebook thử nghiệm cho các ca ngắt WS hoặc restart server.
+
+Lưu số liệu và điều kiện chạy theo ngày trong [thư mục báo cáo](reports/).
 
 ## Nghiệm thu demo trên laptop
 
 Chạy lần lượt chat, classifier Transformers và classifier với checkpoint riêng theo [hướng dẫn demo](../examples/demos.md). Trên cả ba luồng, kiểm tra trang hiển thị đúng model và thiết bị. Chat đạt khi trả đủ stream. Classifier đạt khi xử lý hai ảnh liên tiếp, từ chối ảnh lỗi và trả kết quả hợp lệ ở lượt kế tiếp. Với ví dụ hai nhãn, ảnh đỏ và xanh dương phải cho nhãn đứng đầu tương ứng.
 
-Thử gửi thêm một yêu cầu khi worker đang bận và kiểm tra thông báo. Với phiên thử riêng, dừng notebook trong lúc demo đang mở, kiểm tra hướng dẫn kết nối lại rồi mở phiên mới và gửi một yêu cầu thành công. [Kết quả hiện có](PLAN_V2.md#demo-trên-laptop-cho-cá-nhân-và-sinh-viên)
+Thử gửi thêm một yêu cầu khi worker đang bận và kiểm tra thông báo. Với phiên thử riêng, dừng notebook trong lúc demo đang mở, kiểm tra hướng dẫn kết nối lại rồi mở phiên mới và gửi một yêu cầu thành công. [Kết quả hiện có](reports/2026-11-19-v2.md#demo-trên-laptop-cho-cá-nhân-và-sinh-viên)
 
 ## 1. Cài đặt và lập mốc local
 
 Mở terminal tại thư mục dự án chứa đủ các đường dẫn bên dưới. Nếu thiếu, lấy bản source đầy đủ trước khi cài. Chuẩn bị môi trường Python ≥ 3.10 có pip, curl, cùng quyền mở cổng localhost cho test. pip có thể cần Internet để lấy build dependency.
 
 ```bash
-ls pyproject.toml src/kgl/cli.py tests/fake_jupyter.py
-conda activate myenv                 # môi trường đã có trên máy chủ dự án
+ls pyproject.toml src/kgl/cli/app.py tests/fake_jupyter.py
 python -m pip install -e .
 kgl --version
 set -o pipefail
@@ -30,16 +30,16 @@ python -V
 PYTHONPATH=src python -m unittest discover -s tests -t . -v 2>&1 | tee "$RUN/local-tests.log"
 ```
 
-**Đạt** khi unittest báo OK. Jupyter Server và ipykernel là dependency tùy chọn của bài test local với kernel thật; myenv trên máy hiện tại đã cài cả hai. Nếu thấy skipped, kiểm tra lý do trước khi kết luận.
+**Đạt** khi unittest báo OK. Jupyter Server và ipykernel là dependency tùy chọn của bài test local với kernel thật. Nếu thấy skipped, kiểm tra lý do trước khi kết luận.
 
-Để dùng lại phiên đã lưu trên máy hiện tại, đặt `export KGL_HOME="$HOME/kgl-test.XYuHCj/session"` rồi chạy `kgl exec --timeout 15 'print(2)'`. Nếu nhận được 2, tiếp tục bước 3. Khi URL hết hạn, thực hiện bước 2 và nhập lại qua stdin.
+Để dùng lại phiên đã lưu của bạn, đặt `KGL_HOME` tới thư mục session tương ứng rồi chạy `kgl exec --timeout 15 'print(2)'`. Nếu nhận được 2, tiếp tục bước 3. Khi URL hết hạn, thực hiện bước 2 và nhập lại qua stdin.
 
 ### Thử nhanh bản sửa với session còn hiệu lực
 
 Tại thư mục dự án, dùng lệnh dưới đây sau khi đã kiểm tra session. Bài thử dùng thêm VRAM cho một Qwen 0.5B trên cổng và thư mục riêng của VM, rồi dừng instance do bài thử tạo. Nó giữ session notebook đang chạy. Báo cáo JSON ghi device/dtype, 20 request, độ trễ, kết quả ngắt WS sau chunk có nội dung và kết quả dừng server. Phép thử này cần mạng tới Kaggle và quyền tải hoặc cache model trên VM.
 
 ```bash
-KGL_HOME="$HOME/kgl-test.XYuHCj/session" /home/iast-2/miniconda3/envs/myenv/bin/python -m tests.kaggle_smoke
+python -m tests.kaggle_smoke
 ```
 
 Để nghiệm thu hủy v2, đặt thêm `KGL_CONTROL_KERNEL_ID` bằng ID đầy đủ của kernel phụ đang chạy trong cùng notebook thử. Smoke test yêu cầu xác nhận worker đã nhả lượt sau khi cắt stream và yêu cầu tiếp theo thành công. Nếu không đặt, báo cáo ghi `cancellation_confirmed: null`. Trong một ca riêng, giữ một cell thử nghiệm đang chạy trên kernel notebook và xác minh lệnh hủy inference không ngắt cell đó.
@@ -70,7 +70,7 @@ kgl exec --timeout 30 'print(1 + 1)'
 kgl status --json > "$RUN/status.json"
 ```
 
-**Đạt** khi connect hoàn tất, exec trả đúng `2` và trường `connection` trong JSON là `ok`. `auth` chỉ liệt kê credential hiện có. Dòng `connected` xuất hiện sau khi probe kernel thành công. Nếu có nhiều kernel, chọn kernel notebook bằng `--kernel-id` khi connect. Với 401/403, lấy URL mới từ phiên còn chạy. Với 404, kiểm tra loại URL. Thử cùng URL trong VS Code để phân biệt lỗi phiên với lỗi xử lý URL của kgl. Nếu VS Code chạy cell được nhưng kgl lỗi, ghi mã HTTP và giai đoạn REST/WS/exec rồi dừng thử model.
+**Đạt** khi connect hoàn tất, exec trả đúng `2` và trường `connection` trong JSON là `ok`. `auth` hướng dẫn lấy URL kết nối. Dòng `connected` xuất hiện sau khi probe kernel thành công. Nếu có nhiều kernel, chọn kernel notebook bằng `--kernel-id` khi connect. Với 401/403, lấy URL mới từ phiên còn chạy. Với 404, kiểm tra loại URL. Thử cùng URL trong VS Code để phân biệt lỗi phiên với lỗi xử lý URL của kgl. Nếu VS Code chạy cell được nhưng kgl lỗi, ghi mã HTTP và giai đoạn REST/WS/exec rồi dừng thử model.
 
 ## 3. Kiểm tra thực thi, trạng thái kernel và truyền file
 
@@ -111,7 +111,7 @@ print(torch.cuda.get_device_name(0))
 PY
 ```
 
-Trong `echo.json`, kiểm tra `kernel_exec`, `infer_x3`, `reconnect` và kết quả dừng server. Doctor mặc định dừng server do nó dùng, nên chạy bước này trước khi mở server model. Nếu chỉ `gpu_visible` lỗi, đường truyền vẫn có thể đạt nhưng phép thử GPU còn thiếu. Nếu thiếu torch/transformers hoặc CUDA là False, kiểm tra image, accelerator và phiên bản thư viện trong **notebook** trước khi tiếp tục.
+Trong `echo.json`, kiểm tra `kernel_exec`, `infer_x3`, `reconnect` và kết quả dừng server. Chạy bước này trước khi mở server model. Mặc định, `doctor` dừng worker do chính nó khởi động sau phép thử. Nếu chỉ `gpu_visible` lỗi, đường truyền vẫn có thể đạt nhưng phép thử GPU còn thiếu. Nếu thiếu torch/transformers hoặc CUDA là False, kiểm tra image, accelerator và phiên bản thư viện trong **notebook** trước khi tiếp tục.
 
 ## 5. Chứng minh đúng model và tiến trình GPU
 
@@ -121,10 +121,15 @@ kgl serve start --backend transformers --require-gpu --model "$MODEL" --dtype fl
 kgl serve status | tee "$RUN/model-health.json"
 kgl infer 'What is 7 plus 5? Answer briefly.' --temperature 0 --max-tokens 32 --timing
 kgl infer 'Name one planet.' --temperature 0 --max-tokens 32 --no-stream --json | tee "$RUN/model-reply.json"
-kgl exec --shell 'p=$(cat /kaggle/working/.kgl/serve.pid); ps -p "$p" -o pid,args; nvidia-smi --query-compute-apps=pid,process_name,used_gpu_memory --format=csv' | tee "$RUN/gpu-process.txt"
+kgl exec --shell <<'SH' | tee "$RUN/gpu-process.txt"
+set -e
+p=$(python -c 'import json; print(json.load(open("/kaggle/working/.kgl/serve.json"))["pid"])')
+ps -p "$p" -o pid,args
+nvidia-smi --query-compute-apps=pid,gpu_uuid,used_gpu_memory --format=csv
+SH
 ```
 
-Với model gắn sẵn, đặt `MODEL` thành đường dẫn thư mục model trên VM. Trong `model-health.json` kiểm tra `state=ready`, `health.backend=transformers` và `health.model` đúng giá trị đã chọn. Kiểm tra cả hai phản hồi đúng cấu trúc và có nội dung, rồi đối chiếu PID của `serve.py` với PID trong bảng NVIDIA và VRAM đã cấp cho tiến trình. Đây là bằng chứng vận hành gián tiếp về GPU. Bản mới còn trả `health.device`, `health.dtype` và `health.instance`. Ghi giá trị thực, ví dụ `cuda:0` và `torch.float16`. Nếu health trả echo hoặc model khác, đánh dấu FAIL, dừng server thử nghiệm và khởi động lại đúng model. Nếu khởi động lỗi trước khi CLI lưu server, xem log bằng `kgl exec --shell 'tail -n 50 /kaggle/working/.kgl/serve.log'`.
+Với model gắn sẵn, đặt `MODEL` thành đường dẫn thư mục model trên VM. Trong `model-health.json` kiểm tra `state=ready`, `health.backend=transformers` và `health.model` đúng giá trị đã chọn. Kiểm tra cả hai phản hồi đúng cấu trúc và có nội dung, rồi đối chiếu PID của `serve.pyz` với PID trong bảng NVIDIA và VRAM đã cấp cho tiến trình. Đây là bằng chứng vận hành gián tiếp về GPU. Bản mới còn trả `health.device`, `health.dtype` và `health.instance`. Ghi giá trị thực, ví dụ `cuda:0` và `torch.float16`. Nếu health trả echo hoặc model khác, đánh dấu FAIL, dừng server thử nghiệm và khởi động lại đúng model. Nếu khởi động lỗi trước khi CLI lưu server, xem log bằng `kgl exec --shell 'tail -n 50 /kaggle/working/.kgl/serve.log'`.
 
 ### Thử chia trọng số trên hai GPU
 
@@ -151,7 +156,9 @@ kgl serve start --require-gpu --device-map "$MAP" --dtype float16 --model "$MODE
   --prefill-chunk-size 256 --wait-timeout 900
 ```
 
-Tùy chọn prefill yêu cầu bản Transformers hỗ trợ `GenerationConfig.prefill_chunk_size`. Trên cấu hình đã thử, chia đoạn 256 token giúp prompt 2.088 token chạy được. Prompt khoảng 4.100 token vẫn gặp OOM. [Kết quả thử trên hai T4](PLAN_V2.md#qwen25-14b-instruct-trên-hai-tesla-t4)
+Tùy chọn prefill yêu cầu bản Transformers hỗ trợ `GenerationConfig.prefill_chunk_size`. [Kết quả thử trên hai T4](reports/2026-11-19-v2.md#qwen25-14b-instruct-trên-hai-tesla-t4)
+
+Khi lập bản đồ cho model khác, kiểm tra `tie_word_embeddings` trong cấu hình. Trên Qwen2.5-0.5B-Instruct, đặt `model.embed_tokens` và `lm_head` trên hai GPU khác nhau khiến worker báo `ready` nhưng inference trả HTTP 500 do tensor nằm trên hai thiết bị. Với hai module cùng ở GPU 0 và 24 lớp chia đều qua hai T4, inference đã thành công. Gửi ít nhất một request sau khi worker báo `ready` để xác nhận bản đồ chạy được.
 
 Đối chiếu `health.devices` với VRAM theo PID trên từng GPU. Sau warm-up, thử JSON và SSE với cùng ngân sách token, tăng độ dài prompt từng bước, rồi thử ngắt stream và kiểm tra request kế tiếp. Ghi VRAM từng GPU lúc ready và khi inference, TTFT, độ dài prompt thực từ usage và lỗi đầu tiên nếu có. Dừng instance thử và kiểm tra VRAM đã được trả lại. [Hướng dẫn chia trọng số của Accelerate](https://huggingface.co/docs/accelerate/v1.4.0/en/concept_guides/big_model_inference)
 
@@ -178,7 +185,7 @@ curl --fail-with-body --max-time 120 -NsS http://127.0.0.1:8001/v1/chat/completi
 
 ## 7. Đo độ bền và thử gián đoạn thực
 
-1. **Đo sau warm-up.** Sau request đầu ở bước 5, chạy lệnh bên dưới trong A khi server đúng model vẫn hoạt động. `--keep` giữ server cho phép thử kế. Ghi số thành công trên 20, latency p50/p95, TTFT p50 (thời gian đến đoạn văn bản đầu tiên). Báo cáo tổng hợp chỉ đưa các request thành công vào thống kê latency. Nếu bước inference gặp exception, ghi cả lỗi và số liệu còn thiếu.
+1. **Đo sau warm-up.** Sau request đầu ở bước 5, chạy lệnh bên dưới trong A khi server đúng model vẫn hoạt động. `doctor` xác nhận instance đã lưu, backend, model và thiết bị CUDA trước khi gửi request. Nếu server dùng cổng khác 8000, truyền cùng cổng vào `doctor --port`. Server có sẵn được giữ lại cho phép thử kế. `--keep` cũng giữ server nếu `doctor` tự khởi động một instance. Ghi số thành công trên 20, latency p50/p95, TTFT p50 (thời gian đến đoạn văn bản đầu tiên). Báo cáo tổng hợp chỉ đưa các request thành công vào thống kê latency. Nếu bước inference gặp exception, ghi cả lỗi và số liệu còn thiếu.
 
    ```bash
    kgl doctor --backend transformers --model "$MODEL" -n 20 --keep --report "$RUN/model-20.json"
@@ -203,3 +210,34 @@ Tắt proxy bằng Ctrl-C nếu nó còn chạy. Trong A chạy `kgl stop`, sau 
 | Kết thúc | Session Kaggle đã dừng, vị trí các file bằng chứng |
 
 Ghi **PASS**, **FAIL** hoặc **chưa xác minh** cho từng mục. Chỉ ghi “đã chạy inference trên Kaggle GPU” khi bước 2 và 5 có đủ bằng chứng. Chỉ ghi “đạt độ tin cậy đã thử” khi có 20/20 request bình thường thành công, API trả đủ nội dung, phép thử gián đoạn và một giờ có kết quả đạt. Kết quả một phiên chỉ mô tả GPU, model và điều kiện mạng của lần đo đó.
+
+## llama.cpp GGUF (experimental)
+
+Với GGUF đã gắn vào Kaggle, dùng [quy trình build và nghiệm thu Qwen 35B](../examples/qwen35b-llama/QWEN35B-KAGGLE.md) để kiểm tra build sẵn có, xử lý lỗi CUDA và chạy lại hai request. Các bước dưới đây mô tả luồng GGUF tổng quát.
+
+1. Lấy một commit llama.cpp từ upstream, giữ lại full SHA dùng cho bài thử, rồi chạy lệnh build trên notebook cần kiểm. Lệnh trả JSON với đường dẫn `manifest`, lệnh khởi động, cờ đã dò qua `--help` và phiên bản. Nếu đã có build tương ứng, lệnh kiểm tra binary và trả lại manifest đó. Phiên local ghi đường dẫn manifest để `serve start --preset` dùng trực tiếp.
+
+   ```bash
+   kgl model install llama --revision "$LLAMA_CPP_SHA" --jobs 2 --timeout 1800
+   ```
+
+2. Chuẩn bị GGUF trên VM. Preset ưu tiên tìm file có tên và SHA-256 khớp trong `/kaggle/input`. Khi tải qua Hugging Face, kgl ghim revision, kiểm SHA-256 và có thể tiếp tục file dở. Cache mặc định là `/tmp/kgl/models`. Với repo cần xác thực, cấp đường dẫn tuyệt đối tới file token 0600 có sẵn trên VM bằng `--hf-token-file`.
+
+   ```bash
+   kgl model fetch --preset examples/qwen35b-llama/qwen3.8-35b-a3b.json --quant Q4_K_M --timeout 1800
+   ```
+
+3. Đặt `GGUF` và `MANIFEST` theo đường dẫn VM trả về. Bắt đầu với ngữ cảnh 4096, kiểm tra VRAM theo PID, rồi tăng ngữ cảnh theo số đo. Planner ước tính bộ nhớ KV và hồi quy cho GGUF Qwen lai. Giới hạn ngữ cảnh theo tổng VRAM cần kiểm tra lại trên từng card. Dùng `model plan --log` với log llama.cpp trên VM để xem buffer thực tế.
+
+   ```bash
+   kgl model plan --model "$GGUF" --ctx 4096
+   kgl serve start --backend llama --model "$GGUF" --preset examples/qwen35b-llama/qwen3.8-35b-a3b.json \
+     --llama-manifest "$MANIFEST" --ctx 4096 --require-gpu
+   kgl status --json
+   kgl infer "What is 2 + 2? Reply with one digit." --json
+   kgl doctor --backend llama -n 3
+   ```
+
+4. Dùng `kgl serve proxy --static examples/chat-demo` để kiểm JSON/SSE qua HTTP local. Trong `infer --json`, `ttft_first_token_s` tính cả reasoning và `ttft_first_content_s` tính đến câu trả lời. Nếu stream kết thúc vì đạt giới hạn token trước khi có câu trả lời, CLI thoát lỗi và chỉ cách tăng `--max-tokens`. Tool calling và vision chưa được nghiệm thu.
+
+Khi kiểm thử hủy giữa stream, dùng kernel phụ (`KGL_CONTROL_KERNEL_ID`) hoặc phiên tạo bằng `kgl connect --new-kernel`. Sau hủy, kiểm tra llama.cpp báo slot rảnh và request mới trả kết quả. Để thử phiên mới, lưu thư mục build dưới dạng tar để giữ quyền chạy của binary, gắn bộ build và GGUF qua dataset, giải nén build vào `/tmp` và chạy lại bước 3.

@@ -2,7 +2,7 @@
 
 | Triệu chứng | Nguyên nhân có thể | Cách xử lý |
 |---|---|---|
-| Trang demo trả 404 | Proxy chạy thiếu cờ demo | Dừng proxy bằng Ctrl-C, chạy `kgl serve proxy --demo` rồi mở địa chỉ được in ra |
+| Trang demo trả 404 | Proxy chạy thiếu cờ demo | Dừng proxy bằng Ctrl-C, chạy `kgl serve proxy --static examples/chat-demo` rồi mở địa chỉ được in ra |
 | Demo ảnh báo lỗi đầu vào | File hỏng, sai định dạng hoặc quá kích thước | Dùng JPEG hoặc PNG tối đa 350 KiB và 16 megapixel. Gửi lại một ảnh hợp lệ |
 | Worker ảnh báo lỗi khi nạp | Thiếu thư viện, checkpoint hoặc kiến trúc không khớp | Xem `kgl serve logs`. Kiểm tra đường dẫn thực trong VM và dùng đúng kiến trúc đã lưu trọng số. [Hướng dẫn checkpoint riêng](../examples/demos.md#use-your-own-checkpoint) |
 | Terminal giữ nguyên sau `kgl serve proxy` | Proxy đang phục vụ ở foreground | Giữ terminal A mở. Ở B chạy `curl --max-time 5 http://127.0.0.1:8001/health`, sau đó gửi một chat request ngắn theo [bước 6](TESTING.md). Ctrl-C ở A dừng proxy local |

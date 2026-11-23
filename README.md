@@ -49,15 +49,34 @@ curl --fail-with-body http://127.0.0.1:8001/v1/chat/completions \
   -d '{"messages":[{"role":"user","content":"Say hello in Vietnamese."}]}'
 ```
 
-Set `"stream": true` and use `curl -N` for server-sent events. For an OpenAI client, use `http://127.0.0.1:8001/v1` as the base URL and get the model ID from `/v1/models`. If you configure `KGL_PROXY_KEY`, send that value as a bearer token. [Agent example](examples/agent_infer.py)
+Set `"stream": true` and use `curl -N` for server-sent events. For an OpenAI client, use `http://127.0.0.1:8001/v1` as the base URL and get the model ID from `/v1/models`. If you configure `KGL_PROXY_KEY`, send that value as a bearer token. [Agent example](examples/agent/agent_infer.py)
 
 When finished, stop the local proxy with Ctrl-C, run `kgl stop`, and stop the notebook session in Kaggle.
 
+If `kgl stop --kill-kernel` cannot confirm that the kernel is gone, it exits with an error and keeps the local session so you can retry.
+
 ## Documentation
 
+The CLI reference and quick starts use English. Operator guides and acceptance reports use Vietnamese.
+
 - [Browser demos for chat, image classification, and your own checkpoint](examples/demos.md)
+- [Serve SAM3 on Kaggle and open the local browser demo](examples/serving-sam3-on-kaggle.md)
 - [Other text models and image classification](examples/workloads.md)
 - [Setup, file transfer, and multi-GPU serving](docs/TESTING.md)
+- [Experimental llama.cpp and GGUF workflow](docs/TESTING.md#llamacpp-gguf-experimental)
+- [Build and test Qwen 35B GGUF on two Kaggle Tesla T4 GPUs](examples/qwen35b-llama/QWEN35B-KAGGLE.md)
 - [Architecture, connection behavior, and configuration](docs/ARCHITECTURE.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Kaggle validation results and roadmap](docs/PLAN_V2.md)
+- [Kaggle validation results and roadmap](docs/reports/2026-11-19-v2.md)
+
+## Migrating an existing checkout
+
+- Import client operations directly from `kgl`. Examples can use `Settings`, `SessionStore`, `Runtime`, `upload_file`, `download_file`, `infer_chat` and `KglError`.
+- Run `kgl serve proxy --static examples/chat-demo` from the repository root to open the browser demo. This replaces `--demo`.
+- Use `kgl model install` and `kgl model plan` for the former `serve install` and `serve plan` commands. Pass a local JSON path to `--preset`. A short name resolves to `NAME.json` in the current directory or a unique match under `examples/*/` when run from the checkout root. [Qwen preset](examples/qwen35b-llama/qwen3.8-35b-a3b.json)
+- Stop the previous image worker before starting a Python handler. Replace `--backend image-classification --predictor FILE` with `--backend python --handler FILE` and send JSON to `POST /handle`. The module implements `load(path, device)` and `handle(model, request_json)`. [Classifier example](examples/image-classifier/README.md)
+- Use `kgl forward --remote-port 8013` for a notebook HTTP service listening on port 8013. The local endpoint defaults to `127.0.0.1:8014`. Forwarding buffers request and response bodies and applies `KGL_REQUEST_BYTES` to each.
+
+## License
+
+[MIT](LICENSE)

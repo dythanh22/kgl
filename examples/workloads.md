@@ -1,6 +1,6 @@
 # Running other workloads
 
-Start a Kaggle GPU notebook and run `kgl connect` locally. The examples below need the checkpoint files on the VM. Enable notebook internet for Hub IDs, or substitute the full VM path of an attached checkpoint. These recipes have been checked against the CLI and model cards. GPU acceptance results for Qwen are in [the test report](../docs/PLAN_V2.md).
+Start a Kaggle GPU notebook and run `kgl connect` locally. The examples below need the checkpoint files on the VM. Enable notebook internet for Hub IDs, or substitute the full VM path of an attached checkpoint. These recipes have been checked against the CLI and model cards. GPU acceptance results for Qwen are in [the test report](../docs/reports/2026-11-19-v2.md).
 
 ## Serve another text chat model
 
@@ -39,8 +39,12 @@ kgl upload ./second.jpg kgl-examples/photo.jpg
 kgl exec 'import json; print(json.dumps(classifier("/kaggle/working/kgl-examples/photo.jpg", top_k=1)))'
 ```
 
-For a browser demo or a persistent image HTTP endpoint, use `kgl serve start --backend image-classification` and `kgl serve proxy --demo`. [Browser demo and custom checkpoint instructions](demos.md)
+For a persistent image endpoint, upload the example handler and start the Python backend. [Browser demo and custom checkpoint instructions](demos.md)
+
+## Serve SAM3 segmentation on Kaggle
+
+Run the SAM3 FastAPI service in the notebook and use its local browser demo through a kgl forward. The example covers a pinned Python/CUDA environment, point and text prompts, and PNG masks. [SAM3 on Kaggle](serving-sam3-on-kaggle.md)
 
 ## Other inference engines and web services
 
-The managed serving backends are Transformers text chat, image classification and echo. vLLM runs its own server and needs an engine adapter for managed startup, readiness, streaming, cancellation and shutdown. Arbitrary FastAPI routes, binary responses and remote Gradio web apps need additional forwarding support. The current local proxy handles one active inference at a time.
+The managed serving backends are Transformers text chat, llama.cpp, Python handlers and echo. vLLM runs its own server and needs an engine adapter for managed startup, readiness, streaming, cancellation and shutdown. Use `kgl forward --remote-port PORT` for buffered HTTP routes and binary responses. The current local proxy handles one active inference at a time.

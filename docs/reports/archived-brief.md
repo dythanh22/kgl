@@ -1,5 +1,7 @@
 # Project: Kaggle GPU CLI & Model Serving (đề bài gốc)
 
+> Bản lưu trữ. Các kết quả và lệnh trong tài liệu này thuộc phiên bản tại thời điểm ghi nhận.
+
 > Bản sao nguyên văn đề bài do người dùng cung cấp, lưu để đối chiếu với `PLAN.md`.
 
 Bạn là Senior Software Architect và AI Infrastructure Engineer, có kinh nghiệm về Python, Jupyter Protocol, WebSocket, GPU computing, model inference và CLI development.
