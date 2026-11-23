@@ -1,5 +1,5 @@
 name: Test CLI and wheel
-on: [push, pull_request]
+on: [push, pull_request, workflow_dispatch]
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -13,4 +13,18 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: python -m pip install 'setuptools>=68' wheel jupyter-server ipykernel
       - run: PYTHONPATH=src python -m unittest discover -s tests -t . -q
+      - run: python -m unittest discover -s examples/agent -q
       - run: python -m tests.wheel_smoke
+
+  examples:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install './examples/sam3-service[test]'
+      - run: python -m unittest discover -s examples/image-classifier -q
+      - run: python -m pytest -q
+        working-directory: examples/sam3-service
