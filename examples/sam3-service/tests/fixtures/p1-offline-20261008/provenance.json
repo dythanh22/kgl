@@ -1,0 +1,49 @@
+{
+  "settings": {
+    "auth_disabled": false,
+    "checkpoint_path": "/weights/sam3.pt",
+    "bpe_path": null,
+    "device": "cuda",
+    "precision": "auto",
+    "max_missing_keys": 0,
+    "warmup": true,
+    "empty_cache_each_request": false,
+    "source_sha": "2345a4ad109ac29c569da749c91d84f10dc08c40",
+    "checkpoint_revision": "3c879f39826c281e95690f02c7821c4de09afae7",
+    "checkpoint_sha256": "9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e",
+    "max_image_bytes": 20971520,
+    "max_image_pixels": 12000000,
+    "max_image_side": 8192,
+    "max_points": 16,
+    "max_text_chars": 128,
+    "max_instances": 100,
+    "default_threshold": 0.5,
+    "min_threshold": 0.1,
+    "queue_size": 8,
+    "request_timeout_s": 60.0,
+    "decode_concurrency": 2,
+    "exit_on_fatal": true,
+    "log_level": "INFO"
+  },
+  "packages": {
+    "torch": "2.10.0+cu128",
+    "torchvision": "0.25.0+cu128",
+    "sam3": "0.1.0",
+    "fastapi": "0.142.4",
+    "pydantic": "2.13.5",
+    "pillow": "12.3.0",
+    "numpy": "1.26.4"
+  },
+  "image_id": "sha256:7dba1a0252bc0d0e89b2c569609ca89bf66b32da514bc20ecc9bb0f241b7991a",
+  "captured_at_utc": "2026-10-08T01:40:43.841671+00:00",
+  "transport": "HTTP loopback on GPU host; excludes machine A/network/TLS latency",
+  "source_sha256": {
+    "src/sam3_service/__init__.py": "0ddf7f8e1546cd8e68b409a186893b79c9f978dc0643b11ca49ae3f486bfe3cc",
+    "src/sam3_service/app.py": "6ec28ebb31d452b74e16bddae3d26d565fd073c28e5bbbb27cd531dba2ca4d00",
+    "src/sam3_service/config.py": "233359cdec5effa52727ae55636d265bd10df90f30ad4f6c05a781b34130efd4",
+    "src/sam3_service/images.py": "15bf6c8f3f231f557ab48a0830a318b6e0de4e214b023a497a2152cc1ec18918",
+    "src/sam3_service/inference.py": "cb244be957d235bac623621965f192704c35f30b757667b771ad14ebd1ccf028",
+    "src/sam3_service/model.py": "1269112298a2ff3fbc9e22c9cbc4057f395ac076dfab4cfb67c6d5cb52c9c441",
+    "src/sam3_service/schemas.py": "0dd2a21e61d6f94c57112d655a974e9e6d7e8118f9b326bcc7f301fd8928b89a"
+  }
+}

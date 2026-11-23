@@ -1,0 +1,34 @@
+{
+  "name": "bad_box",
+  "origin": "real_gpu_http",
+  "method": "POST",
+  "path": "/v1/predict",
+  "auth": "valid",
+  "image_file": "images/traffic-in-vietnam-banner.jpg",
+  "body": {
+    "schema_version": "1",
+    "request_id": "fixture-4a5cdf4ed9ca48a687fd9aeb25151a79",
+    "mode": "instance",
+    "box": {
+      "x1": 20,
+      "y1": 10,
+      "x2": 5,
+      "y2": 30
+    }
+  },
+  "status": 422,
+  "response": {
+    "error": {
+      "code": "invalid_prompt",
+      "message": "box (20.0, 10.0, 5.0, 30.0) không hợp lệ trên ảnh 1920x959 (yêu cầu 0 <= x1 < x2 <= width, 0 <= y1 < y2 <= height).",
+      "request_id": "fixture-4a5cdf4ed9ca48a687fd9aeb25151a79"
+    }
+  },
+  "request_bytes": 526721,
+  "response_bytes": 230,
+  "wall_ms": 27.37,
+  "response_headers": {
+    "content-type": "application/json",
+    "x-request-id": "fixture-4a5cdf4ed9ca48a687fd9aeb25151a79"
+  }
+}

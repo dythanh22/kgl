@@ -1,0 +1,31 @@
+.git
+.gitignore
+.github
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+*.egg-info
+build
+dist
+
+# Bí mật và dữ liệu nặng: không bao giờ đưa vào image
+.env
+.env.*
+!.env.example
+weights
+sam3-checkpoint
+*.pt
+*.pth
+*.safetensors
+*.ckpt
+
+# Không cần trong image chạy
+tests
+*.ipynb
+compose.yml
+Dockerfile
+.dockerignore

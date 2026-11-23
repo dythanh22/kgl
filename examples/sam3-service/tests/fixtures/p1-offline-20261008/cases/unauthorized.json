@@ -1,0 +1,35 @@
+{
+  "name": "unauthorized",
+  "origin": "real_gpu_http",
+  "method": "POST",
+  "path": "/v1/predict",
+  "auth": "missing",
+  "image_file": "images/traffic-in-vietnam-banner.jpg",
+  "body": {
+    "schema_version": "1",
+    "request_id": "fixture-74d849d3a2aa458388e0ad936f33725f",
+    "mode": "instance",
+    "box": {
+      "x1": 1110,
+      "y1": 710,
+      "x2": 1360,
+      "y2": 900
+    }
+  },
+  "status": 401,
+  "response": {
+    "error": {
+      "code": "unauthorized",
+      "message": "Thiếu hoặc sai API key.",
+      "request_id": "ca43207ef8fc4125be3270908573e851"
+    }
+  },
+  "request_bytes": 526728,
+  "response_bytes": 121,
+  "wall_ms": 1.76,
+  "response_headers": {
+    "www-authenticate": "Bearer",
+    "content-type": "application/json",
+    "x-request-id": "ca43207ef8fc4125be3270908573e851"
+  }
+}

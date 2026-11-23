@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>SAM 3 Lab · CVAT service</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0d1117;
+      --panel: #151b23;
+      --panel-2: #1b232d;
+      --line: #2b3542;
+      --muted: #9aa8b8;
+      --text: #edf3f8;
+      --blue: #77a9ff;
+      --green: #62d6a2;
+      --red: #ff7b80;
+      font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; background: var(--bg); color: var(--text); }
+    button, input { font: inherit; }
+    button { color: inherit; cursor: pointer; }
+    .shell { min-height: 100vh; display: flex; flex-direction: column; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 17px 24px; border-bottom: 1px solid var(--line); background: #111720; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .mark { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; color: #09111b; font-weight: 850; background: linear-gradient(145deg, #9ac5ff, #68dfbd); }
+    h1 { margin: 0; font-size: 16px; letter-spacing: .01em; }
+    .subtitle { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .head-right { display: flex; align-items: center; gap: 12px; }
+    .api-origin { max-width: 330px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .health { display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); font-size: 12px; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: #6b7785; }
+    .health.ready .dot { background: var(--green); box-shadow: 0 0 10px #62d6a288; }
+    .health.error .dot { background: var(--red); }
+    main { flex: 1; display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 16px; padding: 16px; min-height: 0; }
+    .controls { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+    .card-title { margin: 0 0 11px; color: #dbe5ef; font-size: 12px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+    .field-label { display: block; color: #c3ceda; font-size: 12px; margin: 0 0 6px; }
+    .field { width: 100%; color: var(--text); background: #0e141b; border: 1px solid #344150; border-radius: 8px; padding: 9px 10px; outline: none; }
+    .field:focus { border-color: var(--blue); box-shadow: 0 0 0 2px #77a9ff22; }
+    .field::placeholder { color: #647282; }
+    .key-row { display: flex; gap: 7px; }
+    .key-row .field { min-width: 0; }
+    .small-btn, .tool-btn, .secondary-btn { border: 1px solid #344150; background: var(--panel-2); border-radius: 8px; padding: 8px 10px; }
+    .small-btn:hover, .secondary-btn:hover, .tool-btn:hover { border-color: #52657a; }
+    .hint { color: var(--muted); font-size: 11px; margin-top: 7px; }
+    .mode-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 4px; border-radius: 9px; background: #0e141b; border: 1px solid var(--line); }
+    .mode-tab { border: 0; border-radius: 6px; background: transparent; color: var(--muted); padding: 8px; }
+    .mode-tab.active { background: #26384f; color: #dceaff; }
+    .tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .tool-btn { color: var(--muted); padding: 8px 4px; font-size: 12px; }
+    .tool-btn.active { color: white; background: #26384f; border-color: #507bb5; }
+    .tool-btn:disabled { opacity: .42; cursor: not-allowed; }
+    .row { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+    .row + .row { margin-top: 10px; }
+    .range-line { display: flex; align-items: center; gap: 10px; }
+    input[type="range"] { width: 100%; accent-color: var(--blue); }
+    .range-value { width: 38px; text-align: right; color: #c9d6e4; font: 12px ui-monospace, monospace; }
+    .prompt-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+    .prompt-chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 99px; padding: 4px 7px 4px 9px; color: #d4dfeb; font-size: 11px; }
+    .prompt-chip button { border: 0; background: none; color: var(--muted); padding: 0 1px; line-height: 1; }
+    .actions { display: grid; grid-template-columns: 1fr auto; gap: 7px; margin-top: 12px; }
+    .run-btn { min-height: 40px; border: 0; border-radius: 8px; background: linear-gradient(100deg, #78aaff, #63d7b0); color: #07121b; font-weight: 800; }
+    .run-btn:hover { filter: brightness(1.06); }
+    .run-btn:disabled { opacity: .45; cursor: wait; filter: grayscale(.4); }
+    .secondary-btn { min-height: 40px; color: #d2deea; }
+    .notice { min-height: 40px; color: var(--muted); font-size: 12px; }
+    .notice.error { color: #ff9b9f; }
+    .results { max-height: 300px; overflow: auto; display: flex; flex-direction: column; gap: 5px; }
+    .result-item { display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: center; padding: 7px; border: 1px solid var(--line); border-radius: 8px; background: #10161d; }
+    .result-item input { accent-color: var(--blue); }
+    .result-name { font-weight: 650; }
+    .result-meta { color: var(--muted); font: 10px ui-monospace, monospace; margin-top: 2px; }
+    .score { color: #a9c9ff; font: 12px ui-monospace, monospace; }
+    .model-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 10px; color: var(--muted); font-size: 11px; }
+    .model-meta strong { display: block; color: #dbe5ef; font: 11px ui-monospace, monospace; overflow-wrap: anywhere; margin-top: 2px; }
+    .workspace { display: flex; flex-direction: column; min-width: 0; min-height: 440px; border: 1px solid var(--line); border-radius: 12px; background: #10161d; overflow: hidden; }
+    .workspace-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 13px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+    .image-dims { font: 11px ui-monospace, monospace; }
+    .canvas-wrap { flex: 1; display: grid; place-items: center; min-height: 0; padding: 18px; overflow: auto; background-color: #0b1016; background-image: linear-gradient(45deg,#111923 25%,transparent 25%),linear-gradient(-45deg,#111923 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#111923 75%),linear-gradient(-45deg,transparent 75%,#111923 75%); background-size: 20px 20px; background-position: 0 0,0 10px,10px -10px,-10px 0; }
+    canvas { display: none; max-width: 100%; max-height: calc(100vh - 190px); object-fit: contain; box-shadow: 0 8px 40px #0008; touch-action: none; }
+    canvas.has-image { display: block; }
+    canvas.point-positive { cursor: crosshair; }
+    canvas.point-negative { cursor: not-allowed; }
+    canvas.box-tool { cursor: crosshair; }
+    .empty { max-width: 460px; text-align: center; color: var(--muted); padding: 50px 20px; }
+    .empty-icon { width: 58px; height: 58px; display: grid; place-items: center; margin: 0 auto 16px; border: 1px solid #3a4959; border-radius: 17px; color: #9dc0f6; font-size: 26px; background: #182331; }
+    .empty strong { display: block; color: #d8e3ee; font-size: 15px; margin-bottom: 6px; }
+    .empty button { margin-top: 15px; }
+    .drop-active { outline: 2px dashed var(--blue); outline-offset: -8px; }
+    .summary { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 8px; }
+    .metric { padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #10161d; }
+    .metric span { display: block; color: var(--muted); font-size: 10px; }
+    .metric strong { display: block; margin-top: 3px; color: #e5edf5; font: 12px ui-monospace, monospace; }
+    .hidden { display: none !important; }
+    @media (max-width: 900px) { main { grid-template-columns: 290px minmax(0, 1fr); } header { padding: 13px 16px; } .api-origin { display: none; } }
+    @media (max-width: 680px) { main { display: flex; flex-direction: column-reverse; padding: 10px; } .workspace { min-height: 48vh; } canvas { max-height: 48vh; } .controls { display: grid; grid-template-columns: 1fr; } header { align-items: flex-start; } .head-right { align-items: flex-end; flex-direction: column; gap: 6px; } .summary { grid-template-columns: repeat(2,1fr); } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="brand">
+        <div class="mark">S3</div>
+        <div><h1>SAM 3 Lab</h1><div class="subtitle">Kiểm thử service trước khi nối CVAT</div></div>
+      </div>
+      <div class="head-right">
+        <div id="apiOrigin" class="api-origin"></div>
+        <div id="health" class="health"><span class="dot"></span><span id="healthText">Đang kiểm tra</span></div>
+      </div>
+    </header>
+
+    <main>
+      <aside class="controls">
+        <section class="card">
+          <h2 class="card-title">Kết nối API</h2>
+          <label class="field-label" for="apiKey">Bearer API key</label>
+          <div class="key-row">
+            <input id="apiKey" class="field" type="password" autocomplete="off" spellcheck="false" placeholder="Dán key từ file .env trên server">
+            <button id="toggleKey" class="small-btn" type="button" aria-label="Hiện hoặc ẩn API key">Hiện</button>
+          </div>
+          <div class="hint">Key chỉ giữ trong tab này, không lưu vào browser.</div>
+          <div class="row" style="margin-top:10px">
+            <span class="hint" style="margin:0">API: <code id="apiPath">/v1/predict</code></span>
+            <button id="checkHealth" class="small-btn" type="button">Kiểm tra lại</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2 class="card-title">Ảnh và chế độ</h2>
+          <label class="field-label" for="imageFile">Ảnh đầu vào · JPEG / PNG / WEBP</label>
+          <input id="imageFile" class="field" type="file" accept="image/jpeg,image/png,image/webp">
+          <div id="imageInfo" class="hint">Giới hạn service: kích thước request và số pixel theo cấu hình server.</div>
+          <div class="mode-tabs" style="margin-top:12px">
+            <button class="mode-tab active" data-mode="instance" type="button">Instance · point / box</button>
+            <button class="mode-tab" data-mode="concept" type="button">Concept · text</button>
+          </div>
+        </section>
+
+        <section id="instanceCard" class="card">
+          <h2 class="card-title">Prompt instance · điểm hoặc box</h2>
+          <div class="tools">
+            <button class="tool-btn active" data-tool="positive" type="button">＋ Điểm dương</button>
+            <button class="tool-btn" data-tool="negative" type="button">− Điểm âm</button>
+            <button class="tool-btn" data-tool="box" type="button">□ Box</button>
+          </div>
+          <div class="hint">Click để thêm điểm; kéo để thêm tối đa 12 box rồi chạy chung một request. Batch box dùng riêng, không kết hợp điểm.</div>
+          <div id="promptList" class="prompt-list"></div>
+          <div class="actions">
+            <button id="runInstance" class="run-btn" type="button" disabled>Chạy instance</button>
+            <button id="clearPrompts" class="secondary-btn" type="button">Xóa prompt</button>
+          </div>
+        </section>
+
+        <section id="conceptCard" class="card hidden">
+          <h2 class="card-title">Prompt concept · nhiều instance</h2>
+          <label class="field-label" for="conceptText">Text prompt</label>
+          <input id="conceptText" class="field" maxlength="128" value="object" placeholder="Ví dụ: car, helmet">
+          <div class="row" style="margin-top:12px">
+            <label class="field-label" for="threshold" style="margin:0">Threshold</label>
+            <span id="thresholdValue" class="range-value">0.50</span>
+          </div>
+          <div class="range-line"><input id="threshold" type="range" min="0.10" max="0.95" step="0.01" value="0.50"></div>
+          <div class="row" style="margin-top:8px">
+            <label class="field-label" for="maxInstances" style="margin:0">Số instance tối đa</label>
+            <input id="maxInstances" class="field" type="number" min="1" max="100" value="20" style="width:82px;padding:6px 8px">
+          </div>
+          <div class="hint">Box exemplar chưa được API hiện tại hỗ trợ. Thử threshold khác nhau để quan sát số mask và confidence.</div>
+          <div class="actions">
+            <button id="runConcept" class="run-btn" type="button" disabled>Chạy concept</button>
+            <button id="clearResultsConcept" class="secondary-btn" type="button">Xóa kết quả</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2 class="card-title">Kết quả inference</h2>
+          <div id="notice" class="notice">Chọn ảnh để bắt đầu kiểm thử.</div>
+          <div id="summary" class="summary hidden"></div>
+          <div id="results" class="results" style="margin-top:9px"></div>
+          <div id="emptyResults" class="hint">Chưa có kết quả.</div>
+        </section>
+
+        <section id="modelCard" class="card hidden">
+          <h2 class="card-title">Model và runtime</h2>
+          <div id="modelMeta" class="model-meta"></div>
+        </section>
+      </aside>
+
+      <section id="dropArea" class="workspace">
+        <div class="workspace-bar">
+          <span id="canvasLabel">Ảnh và mask preview</span>
+          <span id="imageDims" class="image-dims"></span>
+        </div>
+        <div id="canvasWrap" class="canvas-wrap">
+          <div id="empty" class="empty">
+            <div class="empty-icon">▧</div>
+            <strong>Nạp ảnh để thử SAM 3</strong>
+            Kéo thả ảnh vào vùng này hoặc chọn file ở bảng điều khiển. Đặt prompt trên ảnh, chạy inference và xem mask trực tiếp.
+            <br><button id="chooseImage" class="secondary-btn" type="button">Chọn ảnh</button>
+          </div>
+          <canvas id="view" aria-label="Ảnh đầu vào và mask SAM 3"></canvas>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+  (() => {
+    "use strict";
+    const $ = (id) => document.getElementById(id);
+    const origin = window.location.origin;
+    $("apiOrigin").textContent = origin;
+    const canvas = $("view");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const state = { mode: "instance", tool: "positive", bitmap: null, file: null, imageBase64: null,
+      points: [], boxes: [], draftBox: null, response: null, selected: new Set(), opacity: 0.42,
+      drawing: false, start: null, drawToken: 0, busy: false };
+    const palette = [[67,196,255],[255,116,119],[93,220,163],[255,194,82],[189,139,255],[255,137,201],[124,222,222],[204,223,99],[255,153,85],[137,172,255]];
+
+    function setNotice(message, error = false) {
+      $("notice").textContent = message;
+      $("notice").classList.toggle("error", error);
+    }
+    function setHealth(status, error = false) {
+      $("healthText").textContent = status;
+      $("health").classList.toggle("ready", status === "Sẵn sàng");
+      $("health").classList.toggle("error", error);
+    }
+    async function checkHealth() {
+      setHealth("Đang kiểm tra");
+      try {
+        const [health, ready] = await Promise.all([
+          fetch(`${origin}/healthz`, { cache: "no-store" }),
+          fetch(`${origin}/readyz`, { cache: "no-store" })
+        ]);
+        const data = await ready.json();
+        if (health.ok && ready.ok && data.status === "ready") setHealth("Sẵn sàng");
+        else if (data.status === "loading") setHealth("Đang nạp model");
+        else setHealth(`Service ${data.status || ready.status}`, true);
+      } catch (e) { setHealth("Không kết nối được", true); }
+    }
+    function updateToolCursor() {
+      canvas.classList.toggle("point-positive", state.tool === "positive" && state.mode === "instance");
+      canvas.classList.toggle("point-negative", state.tool === "negative" && state.mode === "instance");
+      canvas.classList.toggle("box-tool", state.tool === "box" && state.mode === "instance");
+    }
+    function setBusy(value) {
+      state.busy = value;
+      $("runInstance").disabled = value || !state.imageBase64 || (!state.boxes.length && !state.points.some(p => p.label === 1));
+      $("runConcept").disabled = value || !state.imageBase64 || !$("conceptText").value.trim();
+      $("runInstance").textContent = value && state.mode === "instance" ? "Đang inference…" : state.boxes.length > 1 ? `Chạy ${state.boxes.length} box` : "Chạy instance";
+      $("runConcept").textContent = value && state.mode === "concept" ? "Đang inference…" : "Chạy concept";
+    }
+    function coords(event) {
+      const r = canvas.getBoundingClientRect();
+      return { x: Math.max(0, Math.min(canvas.width, (event.clientX - r.left) * canvas.width / r.width)),
+        y: Math.max(0, Math.min(canvas.height, (event.clientY - r.top) * canvas.height / r.height)) };
+    }
+    function drawPrompts() {
+      for (const p of state.points) {
+        ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(8, canvas.width / 90), 0, Math.PI * 2);
+        ctx.fillStyle = p.label ? "#36d99a" : "#ff626a"; ctx.fill();
+        ctx.lineWidth = Math.max(2, canvas.width / 600); ctx.strokeStyle = "#fff"; ctx.stroke();
+        ctx.fillStyle = "#0b121a"; ctx.font = `bold ${Math.max(10, canvas.width / 55)}px sans-serif`;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(p.label ? "+" : "−", p.x, p.y);
+      }
+      for (const [index, b] of state.boxes.entries()) {
+        ctx.save(); ctx.setLineDash([Math.max(5, canvas.width / 100), Math.max(3, canvas.width / 180)]);
+        const color = palette[index % palette.length];
+        ctx.lineWidth = Math.max(2, canvas.width / 500); ctx.strokeStyle = `rgb(${color.join(",")})`;
+        ctx.fillStyle = `rgba(${color.join(",")},0.10)`;
+        ctx.fillRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1); ctx.strokeRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1); ctx.restore();
+        ctx.fillStyle = `rgb(${color.join(",")})`; ctx.font = `bold ${Math.max(11, canvas.width / 60)}px sans-serif`;
+        ctx.textAlign = "left"; ctx.textBaseline = "bottom"; ctx.fillText(String(index + 1), b.x1 + 2, b.y1);
+      }
+      if (state.draftBox) {
+        const b = state.draftBox;
+        ctx.save(); ctx.setLineDash([Math.max(5, canvas.width / 100), Math.max(3, canvas.width / 180)]);
+        ctx.lineWidth = Math.max(2, canvas.width / 500); ctx.strokeStyle = "#fff"; ctx.fillStyle = "#ffffff18";
+        ctx.fillRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1); ctx.strokeRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1); ctx.restore();
+      }
+    }
+    function imageFromBase64(encoded) {
+      return new Promise((resolve, reject) => {
+        const img = new Image(); img.onload = () => resolve(img); img.onerror = reject;
+        img.src = `data:image/png;base64,${encoded}`;
+      });
+    }
+    async function redraw() {
+      const token = ++state.drawToken;
+      if (!state.bitmap) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(state.bitmap, 0, 0);
+      const response = state.response;
+      if (response) {
+        const layer = document.createElement("canvas"); layer.width = canvas.width; layer.height = canvas.height;
+        const lctx = layer.getContext("2d", { willReadFrequently: true });
+        for (const index of state.selected) {
+          if (token !== state.drawToken) return;
+          const item = response.instances[index]; if (!item) continue;
+          try {
+            const mask = await imageFromBase64(item.mask_png_base64);
+            if (token !== state.drawToken) return;
+            lctx.clearRect(0, 0, layer.width, layer.height); lctx.drawImage(mask, 0, 0, layer.width, layer.height);
+            const px = lctx.getImageData(0, 0, layer.width, layer.height); const c = palette[index % palette.length];
+            for (let i = 0; i < px.data.length; i += 4) {
+              const coverage = px.data[i] / 255;
+              px.data[i] = c[0]; px.data[i + 1] = c[1]; px.data[i + 2] = c[2]; px.data[i + 3] = Math.round(coverage * state.opacity * 255);
+            }
+            lctx.putImageData(px, 0, 0); ctx.drawImage(layer, 0, 0);
+          } catch (e) { console.warn("Không render được mask", index, e); }
+        }
+        for (const item of response.instances) {
+          ctx.save(); ctx.strokeStyle = "#fff"; ctx.lineWidth = Math.max(1.5, canvas.width / 700);
+          ctx.setLineDash([Math.max(4, canvas.width / 130), Math.max(3, canvas.width / 200)]);
+          ctx.strokeRect(item.box.x1, item.box.y1, item.box.x2 - item.box.x1, item.box.y2 - item.box.y1); ctx.restore();
+        }
+      }
+      drawPrompts();
+    }
+    function renderPrompts() {
+      const list = $("promptList"); list.replaceChildren();
+      state.points.forEach((p, i) => {
+        const chip = document.createElement("span"); chip.className = "prompt-chip";
+        const label = document.createElement("span"); label.textContent = `${p.label ? "+ điểm dương" : "− điểm âm"} (${Math.round(p.x)}, ${Math.round(p.y)})`;
+        const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "×"; remove.setAttribute("aria-label", "Xóa điểm");
+        remove.addEventListener("click", () => { state.points.splice(i, 1); redraw(); renderPrompts(); setBusy(state.busy); });
+        chip.append(label, remove); list.append(chip);
+      });
+      state.boxes.forEach((box, i) => {
+        const chip = document.createElement("span"); chip.className = "prompt-chip";
+        chip.append(document.createTextNode(`□ ${i + 1}: (${Math.round(box.x1)}, ${Math.round(box.y1)})–(${Math.round(box.x2)}, ${Math.round(box.y2)})`));
+        const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "×"; remove.setAttribute("aria-label", "Xóa box");
+        remove.addEventListener("click", () => { state.boxes.splice(i, 1); redraw(); renderPrompts(); setBusy(state.busy); });
+        chip.append(remove); list.append(chip);
+      });
+    }
+    function clearResults() {
+      state.response = null; state.selected.clear(); $("results").replaceChildren(); $("summary").replaceChildren();
+      $("summary").classList.add("hidden"); $("emptyResults").classList.remove("hidden"); $("modelCard").classList.add("hidden"); redraw();
+    }
+    function metric(label, value) {
+      const node = document.createElement("div"); node.className = "metric";
+      const name = document.createElement("span"); name.textContent = label;
+      const val = document.createElement("strong"); val.textContent = value;
+      node.append(name, val); return node;
+    }
+    function showResponse(data) {
+      state.response = data; state.selected = new Set(data.instances.slice(0, Math.min(8, data.instances.length)).map((_, i) => i));
+      const summary = $("summary"); summary.replaceChildren(
+        metric("Instances", String(data.instances.length)), metric("Queue", `${data.timing.queue_ms.toFixed(1)} ms`),
+        metric("Inference", `${data.timing.inference_ms.toFixed(0)} ms`), metric("End-to-end", `${data.timing.total_ms.toFixed(0)} ms`)
+      ); summary.classList.remove("hidden"); $("emptyResults").classList.toggle("hidden", data.instances.length > 0);
+      const list = $("results"); list.replaceChildren();
+      data.instances.forEach((item, index) => {
+        const row = document.createElement("label"); row.className = "result-item";
+        const check = document.createElement("input"); check.type = "checkbox"; check.checked = state.selected.has(index); check.setAttribute("aria-label", `Hiện mask ${index + 1}`);
+        check.addEventListener("change", () => {
+          if (check.checked && state.selected.size >= 8) { check.checked = false; setNotice("Chỉ hiển thị tối đa 8 mask cùng lúc để tránh dùng quá nhiều bộ nhớ trình duyệt."); return; }
+          if (check.checked) state.selected.add(index); else state.selected.delete(index); redraw();
+        });
+        const details = document.createElement("span");
+        const title = document.createElement("span"); title.className = "result-name";
+        title.textContent = data.mode === "concept" ? `${$("conceptText").value.trim()} ${index + 1}` : item.prompt_id == null ? `Instance ${index + 1}` : `Box ${item.prompt_id + 1}`;
+        const meta = document.createElement("span"); meta.className = "result-meta";
+        meta.textContent = `box ${item.box.x1},${item.box.y1} → ${item.box.x2},${item.box.y2} · ${item.area.toLocaleString()} px · ${item.score_type}`;
+        details.append(title, document.createElement("br"), meta);
+        const score = document.createElement("span"); score.className = "score"; score.textContent = item.score.toFixed(3);
+        row.append(check, details, score); list.append(row);
+      });
+      const m = data.model;
+      const entries = [["Model", m.name], ["Device / precision", `${m.device} / ${m.precision}`], ["SAM 3 source", m.source_sha], ["Checkpoint", m.checkpoint_revision], ["Checkpoint SHA-256", m.checkpoint_sha256 || "chưa ghi"]];
+      const meta = $("modelMeta"); meta.replaceChildren();
+      for (const [name, value] of entries) { const cell = document.createElement("div"); cell.textContent = name; const strong = document.createElement("strong"); strong.textContent = value; cell.append(strong); meta.append(cell); }
+      $("modelCard").classList.remove("hidden");
+      const batchCount = state.mode === "instance" && state.boxes.length > 1 ? ` từ ${state.boxes.length} box` : "";
+      setNotice(data.instances.length ? `Nhận ${data.instances.length} mask${batchCount}. Chọn checkbox để bật/tắt overlay.` : "API chạy thành công nhưng không tìm thấy đối tượng.");
+      redraw();
+    }
+    async function runInference() {
+      if (!state.imageBase64 || state.busy) return;
+      const key = $("apiKey").value.trim();
+      if (!key) { setNotice("Nhập Bearer API key để gọi /v1/predict.", true); $("apiKey").focus(); return; }
+      // crypto.randomUUID() is unavailable on some non-secure HTTP origins
+      // (for example, a self-hosted service opened by LAN IP).
+      const requestId = globalThis.crypto?.randomUUID?.() ||
+        `demo-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      const body = { schema_version: "1", request_id: requestId, mode: state.mode, image_base64: state.imageBase64 };
+      if (state.mode === "instance") {
+        if (!state.boxes.length && !state.points.some(p => p.label === 1)) { setNotice("Thêm ít nhất một điểm dương hoặc một box.", true); return; }
+        if (state.boxes.length > 1 && state.points.length) { setNotice("Batch nhiều box không kết hợp với điểm. Hãy xóa các điểm hoặc dùng một box.", true); return; }
+        if (state.boxes.length > 1) body.boxes = state.boxes;
+        else { body.points = state.points; if (state.boxes.length) body.box = state.boxes[0]; }
+      } else {
+        body.text = $("conceptText").value.trim(); body.threshold = Number($("threshold").value); body.max_instances = Number($("maxInstances").value);
+        if (!body.text || !Number.isInteger(body.max_instances) || body.max_instances < 1 || body.max_instances > 100) { setNotice("Kiểm tra text và số instance (1–100).", true); return; }
+      }
+      clearResults(); setBusy(true); setNotice("Đang gửi ảnh và prompt tới SAM 3…");
+      const started = performance.now();
+      try {
+        const response = await fetch(`${origin}/v1/predict`, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` }, body: JSON.stringify(body) });
+        const data = await response.json();
+        if (!response.ok) { const err = data.error || {}; throw new Error(`${response.status} · ${err.code || "api_error"}: ${err.message || "Yêu cầu thất bại"}${err.request_id ? ` · request ${err.request_id}` : ""}`); }
+        showResponse(data);
+      } catch (e) {
+        const elapsed = ((performance.now() - started) / 1000).toFixed(1);
+        setNotice(`${e.message || "Không gọi được API"} (${elapsed}s).`, true);
+      } finally { setBusy(false); }
+    }
+    async function loadFile(file) {
+      if (!file) return;
+      if (!/^image\/(jpeg|png|webp)$/.test(file.type)) { setNotice("Chỉ nhận ảnh JPEG, PNG hoặc WEBP.", true); return; }
+      try {
+        const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+        state.bitmap?.close?.(); state.bitmap = bitmap; state.file = file;
+        canvas.width = bitmap.width; canvas.height = bitmap.height; canvas.classList.add("has-image"); $("empty").classList.add("hidden");
+        const dataUrl = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file); });
+        state.imageBase64 = String(dataUrl).slice(String(dataUrl).indexOf(",") + 1);
+        state.points = []; state.boxes = []; clearResults(); renderPrompts(); redraw();
+        $("imageDims").textContent = `${bitmap.width} × ${bitmap.height}`;
+        $("imageInfo").textContent = `${file.name} · ${bitmap.width.toLocaleString()} × ${bitmap.height.toLocaleString()} · ${(file.size / 1048576).toFixed(2)} MiB`;
+        setNotice("Ảnh đã nạp. Thêm prompt rồi chạy inference."); setBusy(false);
+      } catch (e) { setNotice(`Không đọc được ảnh: ${e.message || e}`, true); }
+    }
+
+    $("imageFile").addEventListener("change", e => loadFile(e.target.files[0]));
+    $("chooseImage").addEventListener("click", () => $("imageFile").click());
+    $("toggleKey").addEventListener("click", () => { const input = $("apiKey"); input.type = input.type === "password" ? "text" : "password"; $("toggleKey").textContent = input.type === "password" ? "Hiện" : "Ẩn"; });
+    $("checkHealth").addEventListener("click", checkHealth);
+    $("threshold").addEventListener("input", e => $("thresholdValue").textContent = Number(e.target.value).toFixed(2));
+    $("conceptText").addEventListener("input", () => setBusy(state.busy));
+    $("runInstance").addEventListener("click", runInference); $("runConcept").addEventListener("click", runInference);
+    $("clearPrompts").addEventListener("click", () => { state.points = []; state.boxes = []; state.draftBox = null; clearResults(); renderPrompts(); redraw(); setBusy(false); setNotice("Đã xóa prompt và preview."); });
+    $("clearResultsConcept").addEventListener("click", () => { clearResults(); setNotice("Đã xóa kết quả."); });
+    document.querySelectorAll(".mode-tab").forEach(button => button.addEventListener("click", () => {
+      state.mode = button.dataset.mode; document.querySelectorAll(".mode-tab").forEach(b => b.classList.toggle("active", b === button));
+      $("instanceCard").classList.toggle("hidden", state.mode !== "instance"); $("conceptCard").classList.toggle("hidden", state.mode !== "concept");
+      clearResults(); setBusy(false); updateToolCursor(); setNotice(state.mode === "instance" ? "Đặt điểm hoặc box để tạo một mask." : "Nhập text để tìm các instance trong ảnh.");
+    }));
+    document.querySelectorAll(".tool-btn").forEach(button => button.addEventListener("click", () => {
+      state.tool = button.dataset.tool; document.querySelectorAll(".tool-btn").forEach(b => b.classList.toggle("active", b === button)); updateToolCursor();
+    }));
+    canvas.addEventListener("pointerdown", e => {
+      if (!state.bitmap || state.mode !== "instance") return;
+      if (state.tool === "box") { state.drawing = true; state.start = coords(e); state.draftBox = { x1: state.start.x, y1: state.start.y, x2: state.start.x, y2: state.start.y }; canvas.setPointerCapture(e.pointerId); redraw(); }
+      else { const p = coords(e); state.points.push({ x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10, label: state.tool === "positive" ? 1 : 0 }); renderPrompts(); redraw(); setBusy(false); }
+    });
+    canvas.addEventListener("pointermove", e => { if (!state.drawing || !state.start) return; const p = coords(e); state.draftBox = { x1: Math.min(p.x,state.start.x), y1: Math.min(p.y,state.start.y), x2: Math.max(p.x,state.start.x), y2: Math.max(p.y,state.start.y) }; redraw(); });
+    canvas.addEventListener("pointerup", e => {
+      if (!state.drawing) return; state.drawing = false; const b = state.draftBox; state.draftBox = null; state.start = null;
+      if (b && b.x2 - b.x1 >= 2 && b.y2 - b.y1 >= 2) {
+        if (state.boxes.length >= 12) setNotice("Tối đa 12 box trong một request.", true);
+        else state.boxes.push({ x1: Math.floor(b.x1), y1: Math.floor(b.y1), x2: Math.ceil(b.x2), y2: Math.ceil(b.y2) });
+      }
+      renderPrompts(); redraw(); setBusy(false); canvas.releasePointerCapture?.(e.pointerId);
+    });
+    const drop = $("dropArea");
+    ["dragenter", "dragover"].forEach(name => drop.addEventListener(name, e => { e.preventDefault(); drop.classList.add("drop-active"); }));
+    ["dragleave", "drop"].forEach(name => drop.addEventListener(name, e => { e.preventDefault(); drop.classList.remove("drop-active"); }));
+    drop.addEventListener("drop", e => loadFile(e.dataTransfer.files[0]));
+    setBusy(false); updateToolCursor(); checkHealth();
+  })();
+  </script>
+</body>
+</html>

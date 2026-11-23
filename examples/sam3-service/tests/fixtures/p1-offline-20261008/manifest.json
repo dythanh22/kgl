@@ -1,0 +1,22 @@
+{
+  "format_version": 1,
+  "origin": "real_gpu_http",
+  "cases": [
+    "cases/instance_box.json",
+    "cases/instance_point.json",
+    "cases/instance_refine.json",
+    "cases/instance_point_removed.json",
+    "cases/concept_car.json",
+    "cases/concept_bus.json",
+    "cases/instance_leaf.json",
+    "cases/instance_box_repeat.json",
+    "cases/instance_batch.json",
+    "cases/concept_empty.json",
+    "cases/no_prompt.json",
+    "cases/bad_box.json",
+    "cases/threshold_zero.json",
+    "cases/unsupported_mode.json",
+    "cases/invalid_base64.json",
+    "cases/unauthorized.json"
+  ]
+}

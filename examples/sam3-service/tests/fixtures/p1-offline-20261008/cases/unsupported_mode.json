@@ -1,0 +1,37 @@
+{
+  "name": "unsupported_mode",
+  "origin": "real_gpu_http",
+  "method": "POST",
+  "path": "/v1/predict",
+  "auth": "valid",
+  "image_file": "images/traffic-in-vietnam-banner.jpg",
+  "body": {
+    "schema_version": "1",
+    "request_id": "fixture-634efb7bb8384d009d906a541628c44a",
+    "mode": "unknown"
+  },
+  "status": 422,
+  "response": {
+    "error": {
+      "code": "invalid_request",
+      "message": "Request không hợp lệ.",
+      "request_id": "a2671cd7c1dd4f5f8fcc1ce9273c7a1f",
+      "details": [
+        {
+          "loc": [
+            "body"
+          ],
+          "msg": "Input tag 'unknown' found using 'mode' does not match any of the expected tags: 'instance', 'concept'",
+          "type": "union_tag_invalid"
+        }
+      ]
+    }
+  },
+  "request_bytes": 526672,
+  "response_bytes": 289,
+  "wall_ms": 4.12,
+  "response_headers": {
+    "content-type": "application/json",
+    "x-request-id": "a2671cd7c1dd4f5f8fcc1ce9273c7a1f"
+  }
+}

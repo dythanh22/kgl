@@ -1,0 +1,47 @@
+{
+  "name": "concept_empty",
+  "origin": "real_gpu_http",
+  "method": "POST",
+  "path": "/v1/predict",
+  "auth": "valid",
+  "image_file": "images/traffic-in-vietnam-banner.jpg",
+  "body": {
+    "schema_version": "1",
+    "request_id": "fixture-d8748bd9ae914abba7521b12ea863fe7",
+    "mode": "concept",
+    "text": "qzxv_nonexistent_object_7391",
+    "threshold": 0.99,
+    "max_instances": 5
+  },
+  "status": 200,
+  "response": {
+    "schema_version": "1",
+    "request_id": "fixture-d8748bd9ae914abba7521b12ea863fe7",
+    "mode": "concept",
+    "image": {
+      "width": 1920,
+      "height": 959
+    },
+    "model": {
+      "name": "sam3-image",
+      "source_sha": "2345a4ad109ac29c569da749c91d84f10dc08c40",
+      "checkpoint_revision": "3c879f39826c281e95690f02c7821c4de09afae7",
+      "checkpoint_sha256": "9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e",
+      "precision": "fp32",
+      "device": "cuda"
+    },
+    "timing": {
+      "queue_ms": 0.12385999980324414,
+      "inference_ms": 2869.160297000235,
+      "total_ms": 2889.8244840002008
+    },
+    "instances": []
+  },
+  "request_bytes": 526751,
+  "response_bytes": 524,
+  "wall_ms": 2896.97,
+  "response_headers": {
+    "content-type": "application/json",
+    "x-request-id": "fixture-d8748bd9ae914abba7521b12ea863fe7"
+  }
+}

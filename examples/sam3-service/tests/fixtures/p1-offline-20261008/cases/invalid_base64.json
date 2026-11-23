@@ -1,0 +1,35 @@
+{
+  "name": "invalid_base64",
+  "origin": "real_gpu_http",
+  "method": "POST",
+  "path": "/v1/predict",
+  "auth": "valid",
+  "image_file": null,
+  "body": {
+    "schema_version": "1",
+    "request_id": "fixture-a9bfeec3981d4ab29cba396f9a72562e",
+    "mode": "instance",
+    "image_base64": "!!!",
+    "box": {
+      "x1": 1110,
+      "y1": 710,
+      "x2": 1360,
+      "y2": 900
+    }
+  },
+  "status": 400,
+  "response": {
+    "error": {
+      "code": "invalid_base64",
+      "message": "image_base64 không phải base64 hợp lệ.",
+      "request_id": "fixture-a9bfeec3981d4ab29cba396f9a72562e"
+    }
+  },
+  "request_bytes": 179,
+  "response_bytes": 149,
+  "wall_ms": 2.97,
+  "response_headers": {
+    "content-type": "application/json",
+    "x-request-id": "fixture-a9bfeec3981d4ab29cba396f9a72562e"
+  }
+}

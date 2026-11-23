@@ -1,0 +1,38 @@
+{
+  "name": "no_prompt",
+  "origin": "real_gpu_http",
+  "method": "POST",
+  "path": "/v1/predict",
+  "auth": "valid",
+  "image_file": "images/traffic-in-vietnam-banner.jpg",
+  "body": {
+    "schema_version": "1",
+    "request_id": "fixture-98e86fc9dc1943e1bc20b4872d028335",
+    "mode": "instance"
+  },
+  "status": 422,
+  "response": {
+    "error": {
+      "code": "invalid_request",
+      "message": "Request không hợp lệ.",
+      "request_id": "cb26219ac6f24163a6bbb0a90ce4df6e",
+      "details": [
+        {
+          "loc": [
+            "body",
+            "instance"
+          ],
+          "msg": "Value error, mode=instance cần ít nhất một box hoặc một điểm dương (label=1)",
+          "type": "value_error"
+        }
+      ]
+    }
+  },
+  "request_bytes": 526673,
+  "response_bytes": 285,
+  "wall_ms": 5.55,
+  "response_headers": {
+    "content-type": "application/json",
+    "x-request-id": "cb26219ac6f24163a6bbb0a90ce4df6e"
+  }
+}

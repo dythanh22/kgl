@@ -1,0 +1,41 @@
+{
+  "name": "threshold_zero",
+  "origin": "real_gpu_http",
+  "method": "POST",
+  "path": "/v1/predict",
+  "auth": "valid",
+  "image_file": "images/traffic-in-vietnam-banner.jpg",
+  "body": {
+    "schema_version": "1",
+    "request_id": "fixture-c82a040b985649adaee42a060c157559",
+    "mode": "concept",
+    "text": "car",
+    "threshold": 0
+  },
+  "status": 422,
+  "response": {
+    "error": {
+      "code": "invalid_request",
+      "message": "Request không hợp lệ.",
+      "request_id": "dfb8143f11e44e8986947f5a27b5640d",
+      "details": [
+        {
+          "loc": [
+            "body",
+            "concept",
+            "threshold"
+          ],
+          "msg": "Input should be greater than 0",
+          "type": "greater_than"
+        }
+      ]
+    }
+  },
+  "request_bytes": 526703,
+  "response_bytes": 235,
+  "wall_ms": 4.24,
+  "response_headers": {
+    "content-type": "application/json",
+    "x-request-id": "dfb8143f11e44e8986947f5a27b5640d"
+  }
+}

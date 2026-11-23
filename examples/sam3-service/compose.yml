@@ -1,0 +1,45 @@
+# Chạy TRÊN MÁY B (GPU), độc lập với stack CVAT trên máy A.
+#   cp .env.example .env   # rồi điền SAM3_API_KEY, SAM3_CHECKPOINT_REVISION, ...
+#   docker compose build
+#   docker compose up -d
+#   docker compose logs -f sam3
+#
+# Cổng chỉ bind vào loopback: đặt reverse proxy TLS (Caddy/nginx) phía trước và
+# cho máy A gọi qua HTTPS. Không mở thẳng cổng 8000 ra mạng.
+services:
+  sam3:
+    image: sam3-service:${SAM3_IMAGE_TAG:-dev}
+    build:
+      context: .
+      args:
+        SAM3_SHA: ${SAM3_SHA:-2345a4ad109ac29c569da749c91d84f10dc08c40}
+    env_file: .env
+    environment:
+      # Ghi đè từ biến shell nếu cần; mặc định lấy từ Dockerfile/.env.
+      SAM3_SOURCE_SHA: ${SAM3_SHA:-2345a4ad109ac29c569da749c91d84f10dc08c40}
+    ports:
+      - "${SAM3_BIND_ADDRESS:-127.0.0.1}:${SAM3_PUBLISH_PORT:-8000}:8000"
+    volumes:
+      # Thư mục chứa sam3.pt trên máy B; mount chỉ đọc.
+      - ${SAM3_WEIGHTS_DIR:-/srv/sam3/weights}:/weights:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # Lỗi CUDA không phục hồi / nạp model thất bại -> process tự thoát -> restart.
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
