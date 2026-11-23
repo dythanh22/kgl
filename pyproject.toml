@@ -16,6 +16,7 @@ kgl = "kgl.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+namespaces = false
 
 [tool.setuptools.package-data]
-kgl = ["remote_server.py", "demo.html"]
+"kgl.remote" = ["snippets/*.py"]

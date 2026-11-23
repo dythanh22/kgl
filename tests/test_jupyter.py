@@ -1,10 +1,10 @@
 import time
 import unittest
 
-from kgl.errors import AuthError, ConnectionLost, ExecutionError, KernelGone
-from kgl.jupyter import JupyterClient
-from kgl.runtime import Runtime
-from kgl.state import Session
+from kgl.core.errors import AuthError, ConnectionLost, ExecutionError, KernelGone
+from kgl.transport.jupyter import JupyterClient
+from kgl.transport.runtime import Runtime
+from kgl.core.state import Session
 
 from .support import FakeEnvTest
 

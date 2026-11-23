@@ -1,8 +1,8 @@
 import unittest
 
 from kgl.remote import MARKER, MarkerParser, last_marker, render
-from kgl.state import SessionStore, redact_url, Session
-from kgl.ws import encode_frame, parse_frame, OP_TEXT
+from kgl.core.state import SessionStore, redact_url, Session
+from kgl.transport.ws import encode_frame, parse_frame, OP_TEXT
 
 
 class FrameTests(unittest.TestCase):

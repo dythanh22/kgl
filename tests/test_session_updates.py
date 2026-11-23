@@ -6,8 +6,8 @@ import sys
 import tempfile
 import unittest
 
-from kgl.errors import KglError
-from kgl.state import Session, SessionStore
+from kgl.core.errors import KglError
+from kgl.core.state import Session, SessionStore
 
 
 class SessionUpdateTests(unittest.TestCase):
@@ -18,7 +18,7 @@ class SessionUpdateTests(unittest.TestCase):
                                               "connected_at": 1}))
             old = store.load()
             subprocess.run([sys.executable, "-c",
-                            "from kgl.state import SessionStore, Session; from pathlib import Path; "
+                            "from kgl.core.state import SessionStore, Session; from pathlib import Path; "
                             "import sys; SessionStore(Path(sys.argv[1])).save(Session('http://new','b'))",
                             directory], check=True)
             with self.assertRaises(KglError):
@@ -32,7 +32,7 @@ class SessionUpdateTests(unittest.TestCase):
             store = SessionStore(Path(directory))
             store.save(Session("http://old", "a"))
             child = subprocess.run([sys.executable, "-c",
-                                    "from kgl.state import SessionStore, Session; from pathlib import Path; "
+                                    "from kgl.core.state import SessionStore, Session; from pathlib import Path; "
                                     "import sys, os; os.replace = lambda *a: os._exit(19); "
                                     "SessionStore(Path(sys.argv[1])).save(Session('http://new','b'))",
                                     directory])

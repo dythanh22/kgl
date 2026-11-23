@@ -10,12 +10,12 @@ import tempfile
 import time
 import unittest
 
-from kgl.config import Settings
-from kgl.jupyter import JupyterClient
+from kgl.core.config import Settings
+from kgl.transport.jupyter import JupyterClient
 from kgl.remote import PROBE
-from kgl.runtime import Runtime
-from kgl.serving import ServeManager
-from kgl.state import Session
+from kgl.transport.runtime import Runtime
+from kgl.client.serve_manager import ServeManager
+from kgl.core.state import Session
 
 
 @unittest.skipUnless(importlib.util.find_spec("jupyter_server") and importlib.util.find_spec("ipykernel"),

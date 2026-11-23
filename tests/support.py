@@ -3,9 +3,9 @@ import shutil
 import tempfile
 import unittest
 
-from kgl.config import Settings
-from kgl.runtime import Runtime
-from kgl.state import Session
+from kgl.core.config import Settings
+from kgl.transport.runtime import Runtime
+from kgl.core.state import Session
 
 from .fake_jupyter import FakeJupyter
 

@@ -8,11 +8,13 @@ import time
 from urllib.request import Request, urlopen
 import uuid
 
-from kgl.config import Settings
-from kgl.errors import ConnectionLost
-from kgl.runtime import Runtime
-from kgl.serving import ServeManager, infer_chat, make_proxy_server
-from kgl.state import SessionStore
+from kgl.core.config import Settings
+from kgl.core.errors import ConnectionLost
+from kgl.transport.runtime import Runtime
+from kgl.client.serve_manager import ServeManager
+from kgl.client.infer import infer_chat
+from kgl.proxy.handler import make_proxy_server
+from kgl.core.state import ServeRecord, SessionStore
 
 
 def exercise_proxy(base_url: str):
@@ -54,7 +56,7 @@ def main():
             instance = health["instance"]
             assert health["device"].startswith("cuda"), health
             assert manager.start(model, wait_timeout=15, require_gpu=True)["health"]["instance"] == instance
-            rt.session.serve = dict(instance=instance, backend="transformers", model=model, port=port)
+            rt.session.serve = ServeRecord(instance=instance, backend="transformers", model=model, port=port)
             with make_proxy_server(rt, port, model, listen_port=0) as proxy:
                 thread = threading.Thread(target=proxy.serve_forever, daemon=True)
                 thread.start()

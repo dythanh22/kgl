@@ -11,11 +11,12 @@ import unittest
 from unittest.mock import Mock, patch
 
 from kgl import remote
-from kgl.errors import ConnectionLost, ExecutionError, KernelGone
-from kgl.files import upload_file
-from kgl.jupyter import KernelChannel
-from kgl.serving import ServeManager, infer_chat
-from kgl.ws import WebSocket, OP_TEXT, OP_CONT, OP_PING, encode_frame
+from kgl.core.errors import ConnectionLost, ExecutionError, KernelGone
+from kgl.client.files import upload_file
+from kgl.transport.jupyter import KernelChannel
+from kgl.client.serve_manager import ServeManager
+from kgl.client.infer import infer_chat
+from kgl.transport.ws import WebSocket, OP_TEXT, OP_CONT, OP_PING, encode_frame
 from .support import FakeEnvTest
 
 
@@ -80,6 +81,15 @@ class TransportTests(unittest.TestCase):
 
 
 class RecoveryTests(FakeEnvTest):
+    def test_streaming_without_retaining_output(self):
+        code = "print('x' * 20000)"
+        chunks = []
+        result = self.rt.run(code, lambda name, text: chunks.append(text), capture_output=False)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.text, "")
+        self.assertEqual("".join(chunks), "x" * 20000 + "\n")
+        self.assertEqual(self.rt.run(code).text, "".join(chunks))
+
     def tearDown(self):
         try:
             if hasattr(self, "mgr"):
@@ -217,7 +227,7 @@ class RecoveryTests(FakeEnvTest):
             if chunk["choices"][0]["delta"].get("content"):
                 raise BrokenPipeError("test client left")
 
-        with self.assertLogs("kgl.serving", level="INFO") as logs, self.assertRaises(BrokenPipeError):
+        with self.assertLogs("kgl.client.infer", level="INFO") as logs, self.assertRaises(BrokenPipeError):
             infer_chat(self.rt, port, payload, disconnect, timeout=8, expected_instance=instance)
         self.assertIn("remote cancellation confirmed", "\n".join(logs.output))
         self.assertEqual(self.server.interrupts, 0)
@@ -229,7 +239,7 @@ class RecoveryTests(FakeEnvTest):
 class GenerationTests(unittest.TestCase):
     def test_balanced_placement_reserves_vram_and_requires_cuda_only(self):
         from types import SimpleNamespace
-        from kgl.remote_server import TransformersBackend
+        from kgl.vm.backends import TransformersBackend
 
         gib = 1024**3
         cuda = SimpleNamespace(is_available=lambda: True, device_count=lambda: 2,
@@ -262,7 +272,7 @@ class GenerationTests(unittest.TestCase):
     def test_worker_exception_reaches_caller_and_releases_lock(self):
         from queue import Queue
         from types import SimpleNamespace
-        from kgl.remote_server import TransformersBackend
+        from kgl.vm.backends import TransformersBackend
 
         class Streamer:
             def __init__(self, *args, **kwargs):

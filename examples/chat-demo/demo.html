@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kgl model demo</title>
+<style>
+  :root { color-scheme: light; font: 16px/1.55 "Source Sans 3", system-ui, sans-serif; color: #202f38; background: #f3f5f5 }
+  * { box-sizing: border-box }
+  [hidden] { display: none !important }
+  body { margin: 0 }
+  main { max-width: 90rem; margin: auto; padding: 1rem clamp(.75rem,3vw,3rem) }
+  header, .connection, .actions, .thread-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap }
+  header { padding: .45rem 0 1rem }
+  h1 { font: 650 1.45rem/1.2 "Instrument Sans",system-ui,sans-serif; margin: 0 }
+  h2, p { margin: 0 }
+  #model, #status, .metrics, summary { font-size: .84rem; color: #4a6268 }
+  #model { overflow-wrap: anywhere; margin-top: .25rem }
+  .workspace { display: grid; grid-template-columns: clamp(12rem,20vw,17rem) minmax(0,1fr); border: 1px solid #cdd8d9; border-radius: 1rem; overflow: hidden; background: white }
+  .workspace:has(aside[hidden]) { grid-template-columns: 1fr }
+  aside { padding: 1rem; background: #eaf0ef; border-right: 1px solid #cdd8d9 }
+  aside h2, .thread-head h2 { font-size: 1rem; margin: 0 }
+  aside button { width: 100% }
+  #history { display: grid; gap: .25rem; margin-top: 1rem; max-height: 58vh; overflow: auto }
+  #history button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; background: transparent; color: #354c52 }
+  #history [aria-current=true] { background: white; box-shadow: inset 3px 0 #147669 }
+  .panel { min-width: 0 }
+  .thread-head, form, #result, #auth { padding: 1rem clamp(1rem,3vw,2.3rem) }
+  .thread-head { border-bottom: 1px solid #e1e7e7 }
+  #thread-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100% }
+  #transcript { height: clamp(15rem,51dvh,42rem); overflow: auto; padding: 1rem clamp(1rem,4vw,4rem); scrollbar-gutter: stable }
+  #transcript:empty::before { content: "Start with a message below."; color: #5f7377 }
+  article { margin: 0 auto 1.2rem; max-width: 76ch; overflow-wrap: anywhere }
+  article h2 { color: #43706c; font-size: .79rem; margin: 0 0 .25rem }
+  article.user { background: #eef5f3; padding: .65rem 1rem; border-radius: .8rem; width: fit-content; max-width: 88%; margin-right: 0 }
+  article p, pre, #output { white-space: pre-wrap }
+  article p { line-height: 1.65 }
+  pre { font: .9rem/1.5 "IBM Plex Mono",monospace; background: #eff2f3; padding: .8rem; border-radius: .4rem }
+  summary { cursor: pointer }
+  form { border-top: 1px solid #dce5e4 }
+  input, textarea, button, select { font: inherit }
+  label { display: block; font-weight: 600; font-size: .88rem }
+  input, textarea, select { border: 1px solid #9eafb1; border-radius: .5rem; padding: .5rem .7rem; color: inherit; background: white }
+  textarea { width: 100%; min-height: 4rem; resize: vertical; margin: .35rem 0 }
+  #generation { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem }
+  #max-tokens { width: 7rem }
+  button { border: 0; border-radius: .5rem; padding: .5rem .85rem; background: #146c62; color: white; font-weight: 600; cursor: pointer }
+  #new-chat { margin-top: .7rem }
+  #refresh { background: white; color: #31545a; border: 1px solid #bccbcb }
+  button:disabled { opacity: .55; cursor: default }
+  :focus-visible { outline: 3px solid #4c94a4; outline-offset: 2px }
+  .metrics { margin-top: .5rem; font-variant-numeric: tabular-nums }
+  @media (max-width: 45rem) {
+    .workspace { grid-template-columns: minmax(0,1fr) }
+    aside { border: 0; border-bottom: 1px solid #cdd8d9 }
+    #history { display: flex; overflow-x: auto; margin-top: .5rem }
+    #history button { flex: 0 0 auto; max-width: 13rem }
+    aside h2, aside #new-chat { display: inline-block; width: auto; margin: 0 .7rem 0 0 }
+    #transcript { height: 44dvh }
+  }
+</style>
+<main>
+  <header>
+    <div>
+      <h1 id="title">kgl model demo</h1>
+      <p id="model" hidden></p>
+    </div>
+    <div class="connection">
+      <p id="status" role="status">Checking model…</p>
+      <button id="refresh" type="button">Check connection</button>
+    </div>
+  </header>
+  <div id="auth" hidden>
+    <label for="key">Proxy API key</label>
+    <input id="key" type="password" autocomplete="off">
+  </div>
+  <div class="workspace">
+    <aside id="conversations" hidden aria-label="Conversations">
+      <h2>Conversations</h2>
+      <button id="new-chat" type="button">New chat</button>
+      <div id="history"></div>
+    </aside>
+    <div class="panel" id="panel" hidden>
+      <div class="thread-head" id="thread-head" hidden><h2 id="thread-title">New conversation</h2></div>
+      <section id="transcript" aria-label="Conversation" hidden></section>
+      <section id="result" hidden aria-label="Predictions">
+        <h2>Predictions</h2>
+        <p id="output"></p>
+      </section>
+      <form id="form">
+        <div id="chat" hidden>
+          <label for="prompt">Message</label>
+          <textarea id="prompt" placeholder="Write a message…"></textarea>
+        </div>
+        <div id="vision" hidden>
+          <label for="image">Image (JPEG or PNG, up to 350 KiB)</label>
+          <input id="image" type="file" accept="image/jpeg,image/png">
+        </div>
+        <div class="actions">
+          <div id="generation" hidden>
+            <label for="history-scope">Send history</label>
+            <select id="history-scope">
+              <option value="all">All turns</option>
+              <option value="2">Last two turns</option>
+              <option value="0">Current message only</option>
+            </select>
+            <label for="max-tokens">Max reply tokens</label>
+            <input id="max-tokens" type="number" min="1" placeholder="Default">
+          </div>
+          <button id="run" type="submit" disabled>Send</button>
+        </div>
+        <p id="usage" class="metrics" hidden></p>
+      </form>
+    </div>
+  </div>
+</main>
+<script>
+  const byId = id => document.getElementById(id);
+  const status = byId("status");
+  const run = byId("run");
+  const refresh = byId("refresh");
+  const output = byId("output");
+  const transcript = byId("transcript");
+  const historyList = byId("history");
+  const promptField = byId("prompt");
+  const newChat = byId("new-chat");
+  const storageKey = "kgl.demo.conversations.v1";
+  let conversations = [];
+  let active = null;
+  let vision = false;
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(storageKey));
+    if (Array.isArray(saved?.conversations)) {
+      conversations = saved.conversations;
+      active = conversations.find(chat => chat.id === saved.active) || null;
+    }
+  } catch (error) {
+    console.warn("Could not load chat history", error);
+  }
+
+  function saveHistory() {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify({conversations, active: active?.id}));
+      return true;
+    } catch (error) {
+      console.warn("Could not save chat history", error);
+      return false;
+    }
+  }
+
+  // Format common prose markers as text. Fenced code keeps its original characters.
+  function displayAnswer(raw) {
+    const fragment = document.createDocumentFragment();
+    let lines = [];
+    let code = false;
+    function flush() {
+      if (!lines.length) return;
+      const block = document.createElement(code ? "pre" : "p");
+      block.textContent = lines.join("\n");
+      fragment.append(block);
+      lines = [];
+    }
+    for (const line of raw.split("\n")) {
+      if (/^\s*```/.test(line)) {
+        flush();
+        code = !code;
+      } else {
+        lines.push(code ? line : line.replace(/^ {0,3}#{1,6}\s+/, "")
+          .replace(/^(\s*)[-*]\s+/, "$1• ").replace(/\*\*(.+?)\*\*/g, "$1")
+          .replace(/`([^`]+)`/g, "$1"));
+      }
+    }
+    flush();
+    return fragment;
+  }
+
+  function showUsage() {
+    const last = active?.messages.at(-1)?.usage;
+    const usage = byId("usage");
+    usage.hidden = vision;
+    usage.textContent = last
+      ? "Last request · " + last.prompt_tokens.toLocaleString() + " input · "
+        + last.completion_tokens.toLocaleString() + " generated tokens"
+      : "Last request · Token counts unavailable";
+  }
+
+  function addMessage(role, content = "", reasoning = "") {
+    const article = document.createElement("article");
+    const title = document.createElement("h2");
+    const text = document.createElement("div");
+    article.className = role;
+    title.textContent = role === "user" ? "You" : "Assistant";
+    if (role === "assistant") text.append(displayAnswer(content));
+    else {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = content;
+      text.append(paragraph);
+    }
+    article.append(title, text);
+    let thoughts;
+    if (role === "assistant") {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      thoughts = document.createElement("p");
+      summary.textContent = "Reasoning";
+      thoughts.textContent = reasoning;
+      details.hidden = !reasoning;
+      details.append(summary, thoughts);
+      article.append(details);
+    }
+    transcript.append(article);
+    return {text, thoughts};
+  }
+
+  function scrollToReply() {
+    transcript.scrollTop = transcript.scrollHeight;
+  }
+
+  function renderHistory() {
+    historyList.replaceChildren();
+    for (const chat of conversations) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = chat.messages[0].content;
+      button.title = button.textContent;
+      button.setAttribute("aria-current", String(chat === active));
+      button.addEventListener("click", () => selectChat(chat));
+      historyList.append(button);
+    }
+  }
+
+  function renderTranscript() {
+    byId("thread-title").textContent = active?.messages[0].content || "New conversation";
+    showUsage();
+    transcript.replaceChildren();
+    for (const message of active?.messages || []) {
+      addMessage(message.role, message.content, message.reasoning);
+    }
+    scrollToReply();
+  }
+
+  function selectChat(chat) {
+    active = chat;
+    renderHistory();
+    renderTranscript();
+    if (!saveHistory()) status.textContent = "Chat history could not be saved in this browser.";
+    promptField.value = "";
+    promptField.focus();
+  }
+
+  function setBusy(busy) {
+    run.disabled = refresh.disabled = newChat.disabled = busy;
+    historyList.inert = busy;
+    promptField.readOnly = busy;
+    byId("max-tokens").readOnly = busy;
+    byId("history-scope").disabled = busy;
+  }
+
+  function headers() {
+    const key = byId("key").value;
+    return key ? {"Authorization": "Bearer " + key} : {};
+  }
+
+  function showError(error) {
+    const message = error instanceof TypeError
+      ? "Local proxy unavailable. Check the proxy terminal."
+      : error.message;
+    const hint = /cuda.*out of memory|outofmemoryerror/i.test(message)
+      ? " Try a smaller model or restart the worker with more GPU memory available."
+      : "";
+    status.textContent = message + hint;
+  }
+
+  async function check() {
+    run.disabled = refresh.disabled = true;
+    status.textContent = "Checking model…";
+    try {
+      const response = await fetch("/ready", {headers: headers()});
+      const data = await response.json();
+      const health = data.health || data.last_health;
+      if (response.status === 401) {
+        byId("auth").hidden = false;
+        throw new Error("Enter your proxy API key, then check the connection.");
+      }
+      if (data.state === "busy") throw new Error("Worker busy. Check again after the current request.");
+      if (health?.status === "error") throw new Error(health.error + " See kgl serve logs.");
+      if (data.state === "loading") throw new Error("Loading model. Check again in a moment.");
+      if (data.state === "down") throw new Error("Worker unavailable. Check kgl serve status and kgl serve logs.");
+      if (!response.ok) {
+        const detail = data.error?.message || "Worker identity or device does not match.";
+        throw new Error(detail + " Check kgl status and reconnect if the Kaggle session ended.");
+      }
+      vision = health.backend === "python";
+      byId("title").textContent = vision ? "Image classification" : "Model chat";
+      const model = byId("model");
+      const devices = health.devices?.join(", ") || health.device;
+      const context = health.n_ctx || health.requested_context;
+      const contextLabel = context
+        ? context.toLocaleString() + " token context" + (health.n_ctx ? "" : " requested")
+        : "";
+      model.title = health.model;
+      const limit = byId("max-tokens");
+      if (Number.isInteger(health.n_ctx)) limit.max = health.n_ctx - 1;
+      else limit.removeAttribute("max");
+      model.textContent = [health.model?.split("/").pop(), devices, contextLabel]
+        .filter(Boolean).join(" · ");
+      model.hidden = false;
+      byId("chat").hidden = vision;
+      byId("vision").hidden = !vision;
+      byId("conversations").hidden = byId("transcript").hidden = byId("generation").hidden = vision;
+      byId("thread-head").hidden = vision;
+      byId("usage").hidden = vision;
+      byId("panel").hidden = false;
+      if (!vision) {
+        renderHistory();
+        renderTranscript();
+      }
+      status.textContent = "Ready";
+      run.textContent = vision ? "Classify image" : "Send";
+      run.disabled = false;
+    } catch (error) {
+      showError(error);
+    } finally {
+      refresh.disabled = false;
+    }
+  }
+
+  function readImage(file) {
+    if (!file || file.size === 0 || file.size > 350 * 1024) {
+      throw new Error("Choose a JPEG or PNG between 1 byte and 350 KiB.");
+    }
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(",", 2)[1]);
+      reader.onerror = () => reject(new Error("Could not read the selected file."));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function readChat(response, {text: output, thoughts}) {
+    let finishReason;
+    let content = "";
+    let usage;
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = "";
+    try {
+      while (true) {
+        const {value, done} = await reader.read();
+        if (done) throw new Error("The reply ended early. Check the connection before retrying.");
+        buffer += value;
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          const text = line.slice(5).trim();
+          if (text === "[DONE]") return {finishReason, content, usage};
+          const event = JSON.parse(text);
+          if (event.error) throw new Error(event.error.message);
+          if (Number.isInteger(event.usage?.prompt_tokens) && Number.isInteger(event.usage?.completion_tokens)) usage = event.usage;
+          const choice = event.choices?.[0];
+          const delta = choice?.delta;
+          const nearBottom = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 80;
+          if (delta?.reasoning_content) {
+            thoughts.parentElement.hidden = false;
+            thoughts.textContent += delta.reasoning_content;
+          }
+          if (delta?.content) {
+            content += delta.content;
+            output.replaceChildren(displayAnswer(content));
+          }
+          finishReason = choice?.finish_reason || finishReason;
+          if (nearBottom) scrollToReply();
+        }
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
+  }
+
+  byId("form").addEventListener("submit", async event => {
+    event.preventDefault();
+    const prompt = promptField.value.trim();
+    if (!vision && !prompt) {
+      showError(new Error("Enter a message."));
+      return;
+    }
+    setBusy(true);
+    byId("result").hidden = true;
+    try {
+      const messages = [...(active?.messages || []), {role: "user", content: prompt}];
+      const scope = byId("history-scope").value;
+      const sent = scope === "all" ? messages : messages.slice(-(2 * Number(scope) + 1));
+      const payload = vision ? {image: await readImage(byId("image").files[0])}
+        : {messages: sent.map(({role, content}) => ({role, content})), stream: true, stream_options: {include_usage: true}};
+      if (!vision && byId("max-tokens").value) {
+        payload.max_tokens = byId("max-tokens").valueAsNumber;
+      }
+      status.textContent = "Running inference…";
+      let reply;
+      if (!vision) {
+        renderTranscript();
+        addMessage("user", prompt);
+        reply = addMessage("assistant");
+        scrollToReply();
+      }
+      const response = await fetch(vision ? "/handle" : "/v1/chat/completions", {
+        method: "POST", headers: {...headers(), "Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        const {error} = await response.json();
+        if (response.status === 401) byId("auth").hidden = false;
+        const hint = response.status === 503 ? " Check the connection before retrying." : "";
+        throw new Error((error?.message || "Inference failed.") + hint);
+      }
+      if (vision) {
+        const {predictions} = await response.json();
+        output.textContent = predictions.map(item => item.label + " · " + (item.score * 100).toFixed(1) + "%").join("\n")
+          || "No predictions returned.";
+        byId("result").hidden = false;
+        status.textContent = "Ready";
+        return;
+      }
+
+      const {finishReason, content, usage} = await readChat(response, reply);
+      if (!content.trim()) {
+        throw new Error(finishReason === "length"
+          ? "The model reached the reply token limit. Increase it and send again."
+          : "The model returned an empty reply. Send again to retry.");
+      }
+      if (!active) {
+        active = {id: crypto.randomUUID()};
+        conversations.unshift(active);
+      }
+      active.messages = [...messages, {role: "assistant", content, usage, reasoning: reply.thoughts.textContent}];
+      renderHistory();
+      byId("thread-title").textContent = active.messages[0].content;
+      showUsage();
+      promptField.value = "";
+      const saved = saveHistory();
+      status.textContent = finishReason === "length" ? "Reply reached the token limit." : "Ready";
+      if (!saved) status.textContent += " Chat history could not be saved in this browser.";
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  });
+  newChat.addEventListener("click", () => selectChat(null));
+  refresh.addEventListener("click", check);
+  check();
+</script>
+</html>

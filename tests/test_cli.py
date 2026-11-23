@@ -8,7 +8,9 @@ import unittest
 from unittest import mock
 
 from kgl.cli import main
-from kgl.jupyter import ExecResult
+from kgl.core.errors import ConnectionLost
+from kgl.transport.jupyter import ExecResult
+from kgl.core.state import ServeRecord, SessionStore
 
 from .support import FakeEnvTest
 
@@ -67,7 +69,7 @@ class CliTests(FakeEnvTest):
         self.assertEqual(self.kgl("exec", "--shell", "exit 127")[0], 127)
         self.assertEqual(self.kgl("exec", "--shell", "kill -TERM $$")[0], 143)
         self.assertEqual(self.kgl("exec", "print('@@KGL@@{}')")[:2], (0, "@@KGL@@{}\n"))
-        with mock.patch("kgl.runtime.Runtime.run", return_value=ExecResult(status="aborted")):
+        with mock.patch("kgl.transport.runtime.Runtime.run", return_value=ExecResult(status="aborted")):
             rc, _, err = self.kgl("exec", "print('skipped')")
             self.assertEqual(rc, 4)
             self.assertIn("aborted", err)
@@ -110,12 +112,53 @@ class CliTests(FakeEnvTest):
         self.assertTrue(any("infer_x5" in l and l.startswith("[PASS]") for l in lines), out)
         self.assertTrue(any("reconnect" in l and l.startswith("[PASS]") for l in lines), out)
 
+    def test_doctor_reuses_recorded_worker_with_custom_options(self):
+        self.kgl("connect", "--proxy-url", self.server.url)
+        port = str(19900 + os.getpid() % 300)
+        rc, _, err = self.kgl("serve", "start", "--backend", "echo", "--dtype", "float32",
+                              "--port", port, "--wait-timeout", "10")
+        self.assertEqual(rc, 0, err)
+        try:
+            _, out, _ = self.kgl("doctor", "-n", "1", "--port", port, "--wait-timeout", "10")
+            self.assertRegex(out, r"\[PASS\].*infer_x1")
+            self.assertNotIn("serve_stop", out)
+            self.assertEqual(self.kgl("infer", "after doctor")[:2], (0, "echo: after doctor\n"))
+
+            rc, out, _ = self.kgl("doctor", "--backend", "transformers", "-n", "1",
+                                  "--port", port, "--wait-timeout", "10")
+            self.assertEqual(rc, 1)
+            self.assertRegex(out, r"\[FAIL\].*serve_start")
+            self.assertNotIn("infer_x1", out)
+        finally:
+            self.kgl("serve", "stop")
+
+    def test_stop_preserves_session_when_kernel_delete_outcome_is_unknown(self):
+        self.kgl("connect", "--proxy-url", self.server.url)
+        store = SessionStore(Path(self.home))
+        session = store.load()
+        session.serve = ServeRecord(port=8000, instance="test-worker", backend="echo", model="echo")
+        store.save(session)
+        with mock.patch("kgl.cli.commands.session.ServeManager.stop", return_value={"stopped": True}) as stop, \
+                mock.patch("kgl.transport.jupyter.JupyterClient.delete_kernel",
+                           side_effect=ConnectionLost("delete response lost")):
+            rc, _, err = self.kgl("stop", "--kill-kernel")
+        self.assertEqual(rc, 3)
+        self.assertIn("delete response lost", err)
+        stop.assert_called_once_with("test-worker")
+        self.assertEqual(store.load().kernel_id, session.kernel_id)
+        self.assertIsNone(store.load().serve)
+
+        # Simulate a DELETE that reached Jupyter before its response was lost.
+        self.server.kernels.pop(session.kernel_id)
+        self.assertEqual(self.kgl("stop", "--kill-kernel")[0], 0)
+        self.assertIsNone(store.load())
+
     def test_auth_never_prints_secrets(self):
         with mock.patch.dict(os.environ, {"KAGGLE_API_TOKEN": "SUPERSECRET"}):
             rc, out, _ = self.kgl("auth")
         self.assertEqual(rc, 0)
         self.assertNotIn("SUPERSECRET", out)
-        self.assertIn("KAGGLE_API_TOKEN", out)
+        self.assertIn("VS Code Compatible URL", out)
 
 
 if __name__ == "__main__":
