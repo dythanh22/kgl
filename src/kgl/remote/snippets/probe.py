@@ -27,11 +27,7 @@ try:
     info["disk_free_gb"] = round(du.free / 1e9, 1)
 except Exception:
     pass
-try:
-    clk = os.sysconf("SC_CLK_TCK")
-    start_ticks = int(open("/proc/1/stat").read().rsplit(")", 1)[1].split()[19])
-    btime = [int(l.split()[1]) for l in open("/proc/stat") if l.startswith("btime")][0]
-    info["container_uptime_s"] = int(time.time() - (btime + start_ticks / clk))
-except Exception:
-    pass
+uptime = container_uptime()
+if uptime is not None:
+    info["container_uptime_s"] = uptime
 _emit(info)

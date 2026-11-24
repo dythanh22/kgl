@@ -27,6 +27,10 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
                        listen_host: str = "127.0.0.1", static: Path | None = None):
     last_health = None
     admission = threading.Lock()
+    serve = rt.session.serve
+    qwen_alias = (serve is not None and serve.backend == "llama" and bool(serve.instance)
+                  and serve.model == model_name
+                  and Path(model_name).name == "Qwen3.8-35B-A3B-Q4_K_M.gguf")
 
     class Handler(BaseHTTPRequestHandler):
         timeout = 10
@@ -44,8 +48,8 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
             self.end_headers()
             self.wfile.write(body)
 
-        def _err(self, code: int, msg: str, typ: str = "kgl_error") -> None:
-            self._json(code, {"error": {"message": msg, "type": typ}})
+        def _err(self, code: int, msg: str, typ: str = "kgl_error", *, retry_after: bool = False) -> None:
+            self._json(code, {"error": {"message": msg, "type": typ}}, retry_after=retry_after)
 
         def _authorized(self) -> bool:
             if is_authorized(self.headers, api_key):
@@ -61,7 +65,6 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
             return True
 
         def do_GET(self):
-            nonlocal last_health
             if not self._valid_host():
                 return
             if self.path == "/health":
@@ -71,35 +74,55 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
             if not self._authorized():
                 return
             if self.path == "/ready":
-                deadline = time.monotonic() + 5
-                try:
-                    kernel = rt.client.get_kernel(rt.session.kernel_id, timeout=5)
-                except (KglError, TimeoutError) as exc:
-                    return self._err(503, str(exc), "kernel_rest_unavailable")
-                if kernel.get("execution_state") == "busy":
-                    expected = rt.session.serve
-                    result = {"state": "busy", "instance": expected.instance if expected else None}
-                    if last_health is not None:
-                        checked_at, health = last_health
-                        result.update(last_health=health, health_age_s=time.monotonic() - checked_at)
-                    return self._json(503, result, retry_after=True)
-                try:
-                    result = ServeManager(rt, port).health(timeout=max(.01, deadline - time.monotonic()))
-                except (KglError, TimeoutError) as exc:
-                    return self._err(503, str(exc), "runtime_unavailable")
-                health = result.get("health", {})
-                expected = rt.session.serve
-                if health:
-                    last_health = (time.monotonic(), health)
-                ready = (result["state"] == "ready" and health.get("model") == model_name
-                         and (not expected or health.get("backend") == expected.backend)
-                         and (not expected or health.get("instance") == expected.instance)
-                         and backend_spec(health.get("backend")).proxy_ready(health))
-                return self._json(200 if ready else 503, result, retry_after=result["state"] == "busy")
+                code, result = self._readiness()
+                return self._json(code, result, retry_after=result.get("state") == "busy")
             if self.path in ("/v1/models", "/models"):
-                return self._json(200, {"object": "list",
-                                        "data": [{"id": model_name, "object": "model"}]})
+                models = [{"id": model_name, "object": "model"}]
+                if self.path == "/v1/models" and qwen_alias and self._readiness()[0] == 200:
+                    models.insert(0, {"id": "qwen-local", "object": "model"})
+                return self._json(200, {"object": "list", "data": models})
             self._err(404, "not found")
+
+        def _readiness(self):
+            nonlocal last_health
+            deadline = time.monotonic() + 5
+            expected = rt.session.serve
+            try:
+                kernel = rt.client.get_kernel(rt.session.kernel_id, timeout=5)
+            except (KglError, TimeoutError) as exc:
+                return self._readiness_error(exc, "kernel_rest_unavailable")
+            if kernel.get("execution_state") == "busy" or admission.locked():
+                result = {"state": "busy", "instance": expected.instance if expected else None,
+                          "approx_session_remaining_s": None}
+                cached = last_health
+                if cached is not None:
+                    checked_at, health, uptime = cached
+                    age = time.monotonic() - checked_at
+                    result.update(last_health=health, health_age_s=age)
+                    if uptime is not None:
+                        result["approx_session_remaining_s"] = rt.settings.approx_session_remaining(uptime + age)
+                return 503, result
+            try:
+                result = ServeManager(rt, port).health(timeout=max(.01, deadline - time.monotonic()))
+            except (KglError, TimeoutError) as exc:
+                return self._readiness_error(exc, "runtime_unavailable")
+            health = result.get("health", {})
+            uptime = result.pop("container_uptime_s", None)
+            result["approx_session_remaining_s"] = rt.settings.approx_session_remaining(uptime)
+            matches = (health.get("model") == model_name
+                       and (not expected or (health.get("backend") == expected.backend
+                                             and health.get("instance") == expected.instance)))
+            last_health = (time.monotonic(), health, uptime) if matches else None
+            if result["state"] == "ready":
+                if not matches:
+                    result["state"] = "wrong_instance"
+                elif not backend_spec(health.get("backend")).proxy_ready(health):
+                    result["state"] = "unavailable"
+            return (200 if result["state"] == "ready" else 503), result
+
+        def _readiness_error(self, exc, error_type):
+            return 503, {"state": "connection_lost", "approx_session_remaining_s": None,
+                         "error": {"message": str(exc), "type": error_type}}
 
         def do_POST(self):
             if not self._valid_host() or not self._authorized():
@@ -125,6 +148,8 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
                 if spec.passthrough:
                     if not isinstance(req, dict):
                         raise ValueError("request must be a JSON object")
+                    if qwen_alias and req.get("model") == "qwen-local":
+                        req["model"] = model_name
                     req = chat_defaults(req, serve.defaults)
                     chat_args(req, model_name, serve.capabilities)
                 elif not custom:
@@ -165,7 +190,7 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
                 if not custom:
                     req.setdefault("model", model_name)
                 if not admission.acquire(blocking=False):
-                    return self._err(503, "inference already running", "worker_busy")
+                    return self._err(503, "inference already running", "worker_busy", retry_after=True)
                 try:
                     options = {"custom": True} if custom else {}
                     if spec.passthrough:

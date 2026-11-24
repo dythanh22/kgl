@@ -102,7 +102,7 @@ class LlamaTests(FakeEnvTest):
     def setUp(self):
         super().setUp()
         root = Path(self.workdir)
-        model = root / "sample.gguf"
+        model = root / "Qwen3.8-35B-A3B-Q4_K_M.gguf"
         root.mkdir(parents=True, exist_ok=True)
         model.write_bytes(b"GGUF")
         launcher = root / "llama-server"
@@ -228,6 +228,47 @@ class LlamaTests(FakeEnvTest):
             proxy.shutdown()
             proxy.server_close()
             thread.join()
+
+    def test_proxy_qwen_alias_and_canonical_id(self):
+        with make_proxy_server(self.rt, self.manager.port, self.model, listen_port=0) as proxy:
+            threading.Thread(target=proxy.serve_forever, daemon=True).start()
+            base = f"http://127.0.0.1:{proxy.server_port}/v1"
+
+            def list_models():
+                with urllib.request.urlopen(base + "/models", timeout=10) as response:
+                    return [item["id"] for item in json.load(response)["data"]]
+
+            def post(model, stream):
+                payload = {"model": model, "stream": stream,
+                           "messages": [{"role": "user", "content": "question"}]}
+                request = urllib.request.Request(base + "/chat/completions", json.dumps(payload).encode(),
+                                                 {"Content-Type": "application/json"})
+                return urllib.request.urlopen(request, timeout=10)
+
+            try:
+                self.assertEqual(list_models(), ["qwen-local", self.model])
+                for model in ("qwen-local", self.model):
+                    for stream in (False, True):
+                        with self.subTest(model=model, stream=stream), post(model, stream) as response:
+                            if stream:
+                                lines = [line.strip() for line in response if line.strip()]
+                                self.assertEqual(lines[-1], b"data: [DONE]")
+                                events = [json.loads(line[6:]) for line in lines[:-1]]
+                                self.assertEqual(events[0]["model"], self.model)
+                                self.assertTrue(any(e["choices"][0].get("finish_reason") == "stop"
+                                                    for e in events if e.get("choices")))
+                            else:
+                                body = json.load(response)
+                                self.assertEqual(body["model"], self.model)
+                                self.assertEqual(body["choices"][0]["finish_reason"], "stop")
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    post("unknown", False)
+                with caught.exception as error:
+                    self.assertEqual(error.code, 400)
+                self.manager.stop()
+                self.assertEqual(list_models(), [self.model])
+            finally:
+                proxy.shutdown()
 
     @unittest.skipUnless(find_spec("openai"), "OpenAI SDK is optional")
     def test_openai_sdk_stream_and_non_stream(self):

@@ -5,17 +5,18 @@ from pathlib import Path
 import os
 import threading
 import unittest
+from unittest.mock import patch
 import urllib.request
 
 from kgl.core.state import ServeRecord
-from kgl.core.errors import KglError
+from kgl.core.errors import KernelGone, KglError
 from kgl.client.files import download_file, upload_file
 from kgl.remote import SHELL, render
 from kgl.vm.backends import PythonBackend
 from kgl.vm.state import State
 from kgl.vm.gateway import make_handler
 from kgl.client.serve_manager import ServeManager
-from kgl.client.infer import infer_chat
+from kgl.client.infer import InferResult, infer_chat
 from kgl.proxy.handler import make_proxy_server
 
 from .support import FakeEnvTest
@@ -147,10 +148,112 @@ class ServeTests(FakeEnvTest):
             self.assertEqual(cm.exception.code, 503)
             models = json.loads(urllib.request.urlopen(urllib.request.Request(
                 base + "/v1/models", headers={"Authorization": "Bearer k"})).read())
-            self.assertEqual(models["data"][0]["id"], "echo")
+            self.assertEqual([model["id"] for model in models["data"]], ["echo"])
         finally:
             srv.shutdown()
             srv.server_close()
+
+    def test_proxy_readiness_states_and_session_estimate(self):
+        instance = "current"
+        self.session.serve = ServeRecord(port=self.port, backend="echo", model="echo", instance=instance)
+        health = {"model": "echo", "backend": "echo", "instance": instance}
+        with make_proxy_server(self.rt, self.port, "echo", listen_port=0) as proxy:
+            threading.Thread(target=proxy.serve_forever, daemon=True).start()
+            url = f"http://127.0.0.1:{proxy.server_port}/ready"
+
+            def get():
+                try:
+                    response = urllib.request.urlopen(url, timeout=5)
+                except urllib.error.HTTPError as exc:
+                    response = exc
+                with response:
+                    return response.status, json.load(response)
+
+            try:
+                with patch.object(self.rt.client, "get_kernel", return_value={"execution_state": "busy"}) as kernel, \
+                        patch("kgl.proxy.handler.ServeManager.health") as probe:
+                    code, body = get()
+                    self.assertEqual((code, body["state"], body["approx_session_remaining_s"]), (503, "busy", None))
+                    self.assertNotIn("last_health", body)
+                    probe.assert_not_called()
+
+                    kernel.return_value = {"execution_state": "idle"}
+                    probe.side_effect = lambda **kwargs: {
+                        "state": "loading", "health": health, "container_uptime_s": 60,
+                    }
+                    code, body = get()
+                    remaining = self.rt.settings.approx_session_remaining(60)
+                    self.assertEqual((code, body["state"], body["approx_session_remaining_s"]),
+                                     (503, "loading", remaining))
+                    self.assertEqual(body["health"], health)
+
+                    kernel.return_value = {"execution_state": "busy"}
+                    code, body = get()
+                    self.assertEqual((code, body["state"], body["last_health"]), (503, "busy", health))
+                    self.assertGreaterEqual(body["health_age_s"], 0)
+                    self.assertLessEqual(body["approx_session_remaining_s"], remaining)
+                    self.assertNotIn("health", body)
+
+                    kernel.return_value = {"execution_state": "idle"}
+                    probe.side_effect = lambda **kwargs: {"state": "ready", "health": health}
+                    code, body = get()
+                    self.assertEqual((code, body["state"], body["approx_session_remaining_s"]), (200, "ready", None))
+
+                    probe.side_effect = KernelGone("kernel disconnected")
+                    code, body = get()
+                    self.assertEqual((code, body["state"], body["approx_session_remaining_s"]),
+                                     (503, "connection_lost", None))
+                    self.assertEqual(body["error"]["type"], "runtime_unavailable")
+
+                    kernel.side_effect = KernelGone("kernel disconnected")
+                    code, body = get()
+                    self.assertEqual((code, body["state"]), (503, "connection_lost"))
+                    self.assertEqual(body["error"]["type"], "kernel_rest_unavailable")
+            finally:
+                proxy.shutdown()
+
+    def test_chat_proxy_busy_does_not_interrupt_active_stream(self):
+        release = threading.Event()
+
+        def infer(rt, port, payload, on_chunk, **kwargs):
+            if on_chunk:
+                on_chunk({"choices": [{"delta": {"content": "first"}}]})
+                if not release.wait(10):
+                    raise TimeoutError("test did not release stream")
+                on_chunk({"choices": [{"delta": {}, "finish_reason": "stop"}]})
+            return InferResult(status=200, body={"answer": "ok"})
+
+        with make_proxy_server(self.rt, self.port, "echo", listen_port=0) as proxy:
+            threading.Thread(target=proxy.serve_forever, daemon=True).start()
+
+            def post(stream=False):
+                url = f"http://127.0.0.1:{proxy.server_port}/v1/chat/completions"
+                payload = {"messages": [{"role": "user", "content": "ping"}], "stream": stream}
+                return urllib.request.urlopen(urllib.request.Request(
+                    url, json.dumps(payload).encode(), {"Content-Type": "application/json"}), timeout=5)
+
+            try:
+                with patch("kgl.proxy.handler.infer_chat", side_effect=infer) as upstream:
+                    with post(stream=True) as first:
+                        try:
+                            self.assertIn(b"first", first.readline())
+                            with self.assertRaises(urllib.error.HTTPError) as caught:
+                                post()
+                            with caught.exception as busy:
+                                self.assertEqual(busy.code, 503)
+                                self.assertEqual(busy.headers["Retry-After"], "1")
+                                self.assertEqual(json.load(busy)["error"]["type"], "worker_busy")
+                            self.assertEqual(upstream.call_count, 1)
+                        finally:
+                            release.set()
+                        tail = first.read()
+                        self.assertIn(b'"finish_reason": "stop"', tail)
+                        self.assertTrue(tail.endswith(b"data: [DONE]\n\n"))
+                    with post() as third:
+                        self.assertEqual(json.load(third)["answer"], "ok")
+                    self.assertEqual(upstream.call_count, 2)
+            finally:
+                proxy.shutdown()
 
     def test_python_handler_validates_and_serializes_requests(self):
         backend = PythonBackend("classifier", None, False)

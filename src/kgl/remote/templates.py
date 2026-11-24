@@ -23,7 +23,8 @@ def _locked_process_operation(operation: str) -> str:
             + indent(operation, "    "))
 
 
-PROBE = _read("probe")
+_CONTAINER_UPTIME = _read("container_uptime")
+PROBE = _CONTAINER_UPTIME + _read("probe")
 UPLOAD_CHUNK = _read("upload_chunk")
 COMMIT_UPLOAD = _read("commit_upload")
 DISCARD_UPLOAD = _read("discard_upload")
@@ -32,7 +33,7 @@ STAT = _read("stat")
 DOWNLOAD_CHUNK = _read("download_chunk")
 SHELL = _read("shell")
 SERVE_START = _locked_process_operation(_read("serve_start"))
-SERVE_HEALTH = _read("serve_health")
+SERVE_HEALTH = _CONTAINER_UPTIME + _read("serve_health")
 SERVE_STOP = _locked_process_operation(_read("serve_stop"))
 SERVE_LOGS = _read("serve_logs")
 INFER = _read_http("infer")

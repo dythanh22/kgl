@@ -109,9 +109,9 @@ def cmd_status(a, st: Settings, store: SessionStore) -> int:
         info = {} if out["kernel"] == "busy" else _probe(rt, st)
         if info:
             out["probe"] = info
-        if "container_uptime_s" in info:
-            limit = st.session_limit_hours * 3600
-            out["approx_session_remaining_s"] = int(limit - info["container_uptime_s"])
+        remaining = st.approx_session_remaining(info.get("container_uptime_s"))
+        if remaining is not None:
+            out["approx_session_remaining_s"] = remaining
         if s.serve:
             out["serve"] = ({"state": "busy", "instance": s.serve.instance}
                             if out["kernel"] == "busy" else ServeManager(rt, s.serve.port).health())

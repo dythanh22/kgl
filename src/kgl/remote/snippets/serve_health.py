@@ -1,10 +1,11 @@
 import json, os, urllib.request
 from collections import deque
 d, port = __DIR__, __PORT__
+uptime = container_uptime()
 try:
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=3) as r:
         h = json.loads(r.read().decode())
-    _emit({"state": h.get("status", "unknown"), "health": h})
+    _emit({"state": h.get("status", "unknown"), "health": h, "container_uptime_s": uptime})
 except Exception as e:
     tail = []
     try:
@@ -21,4 +22,4 @@ except Exception as e:
             state = "starting"
     except (OSError, ValueError, KeyError, IndexError):
         pass
-    _emit({"state": state, "error": repr(e)[:200], "log_tail": tail})
+    _emit({"state": state, "error": repr(e)[:200], "log_tail": tail, "container_uptime_s": uptime})
