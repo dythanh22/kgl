@@ -65,6 +65,7 @@ The CLI reference and quick starts use English. Operator guides and acceptance r
 - [Setup, file transfer, and multi-GPU serving](docs/TESTING.md)
 - [Experimental llama.cpp and GGUF workflow](docs/TESTING.md#llamacpp-gguf-experimental)
 - [Build and test Qwen 35B GGUF on two Kaggle Tesla T4 GPUs](examples/qwen35b-llama/QWEN35B-KAGGLE.md)
+- [Proposed v3 design for daily Qwen chat and API use](docs/DESIGN-v3.md)
 - [Architecture, connection behavior, and configuration](docs/ARCHITECTURE.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Kaggle validation results and roadmap](docs/reports/2026-11-19-v2.md)

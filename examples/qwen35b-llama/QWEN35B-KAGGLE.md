@@ -2,6 +2,37 @@
 
 Mở terminal Bash ở thư mục gốc repo. llama.cpp được build và lưu trên Kaggle. Nếu phiên Kaggle còn thư mục build của đúng commit bên dưới, kiểm tra binary rồi chuyển thẳng đến bước thử model. Lần build mới trên 4 CPU mất khoảng 35 phút.
 
+## Đưa worker về ready bằng một lệnh
+
+Trong `myenv`, tại gốc repo, dùng cùng `KGL_HOME` đã kết nối với notebook. Gắn GGUF Q4_K_M và chọn GPU T4 ×2, rồi chạy:
+
+```bash
+python examples/qwen35b-llama/ready.py
+```
+
+Lệnh khôi phục dataset build ghim khi thiếu, kiểm tra manifest và binary, rồi gọi `kgl serve start` với cấu hình ở bước 3. Nếu đã có worker, kgl so khớp cấu hình trên cổng đã ghi và báo xung đột khi cấu hình khác. Dòng `Qwen ready` hiển thị instance, PID và cổng nội bộ sau khi xác minh context và cả hai GPU. Nếu phiên hết hạn, chạy `kgl connect` rồi thử lại.
+
+### Mở chat và API ở cổng 8001
+
+Sau khi worker đã ready, dùng cùng môi trường và session store trên máy Linux:
+
+```bash
+python examples/qwen35b-llama/proxy.py
+```
+
+Mở [chat local](http://127.0.0.1:8001/) hoặc cấu hình Base URL `http://127.0.0.1:8001/v1` cho script. Lệnh khởi chạy proxy ở nền, xác nhận instance qua `/ready` và in PID. Chạy lại sau khi đổi phiên: lệnh dùng lại proxy đúng đích hoặc kiểm tra worker mới trước khi thay proxy cũ. Nếu lệnh báo bận, chờ lượt đang chạy xong rồi thử lại.
+
+Lệnh dùng `ss` và `/proc` để nhận diện proxy của cùng tài khoản, Python, thư mục chat và `KGL_HOME`. Hỗ trợ cả proxy cũ khởi chạy theo ví dụ `python -m kgl serve proxy --static examples/chat-demo`. Cổng do ứng dụng khác giữ sẽ được báo xung đột. Nếu đặt `KGL_PROXY_KEY`, dùng cùng key khi quản lý lại proxy. Log của proxy do lệnh khởi chạy nằm trong `qwen-proxy.log` ở session store.
+
+Ví dụ curl và Python cho tác vụ trích xuất đầu việc, bearer key và xử lý lỗi nằm trong [hướng dẫn API](API.md).
+
+### Nghiệm thu qua một lần đổi VM
+
+1. Trên VM cũ, ghi instance từ `kgl serve status`. Trong chat tại `http://127.0.0.1:8001/`, gửi một mã thử riêng cho lần đo và giữ lại hội thoại trong cùng hồ sơ trình duyệt. Chạy `python examples/agent/agent_infer.py "What is 2+2? Reply with only the digit."` và ghi câu trả lời.
+2. Trên VM mới có hai T4 và input GGUF, chạy `kgl connect` trong cùng `myenv` và `KGL_HOME`, dán URL của phiên mới tại lời nhắc ẩn. Kiểm tra `kgl exec --timeout 15 'print(2)'`. Trước khi chạy ready, kiểm tra thư mục build của commit ở bước 1 bên dưới để ghi nhận build đã có hay cần khôi phục.
+3. Chạy `python examples/qwen35b-llama/ready.py`, ghi thời gian và instance. Chạy `python examples/qwen35b-llama/proxy.py` rồi xác nhận `/ready` trên cổng 8001 trả về instance mới.
+4. Mở lại đúng hội thoại trong cùng hồ sơ trình duyệt, chọn gửi đủ lịch sử và yêu cầu nhắc lại mã thử. Chạy lại nguyên lệnh script ở mục 1. Ghi kết quả GUI và script riêng trong báo cáo. Nếu VM cũ đã dừng trước khi tạo hội thoại thử, ghi rõ phần bằng chứng còn thiếu.
+
 ## 1. Kiểm tra phiên, GGUF và build sẵn có
 
 ```bash
@@ -23,6 +54,40 @@ kgl exec --shell --timeout 20 "test -s '$MANIFEST' && '$PACKAGE/llama' serve --v
 ```
 
 Nếu thiếu GGUF, gắn model qua **Add Input** trong Kaggle. File thử nghiệm khoảng 20,2 GiB và được đọc trực tiếp từ mount; không cần copy sang `/kaggle/working` hay tải lại. Nếu lệnh thứ hai in đúng commit `f4f6f2e`, bỏ qua bước 2. Nếu manifest có nhưng binary không chạy, kiểm tra thư viện thiếu bằng `ldd` trên Kaggle trước khi quyết định build lại.
+
+### Khôi phục từ Dataset trên phiên Kaggle mới
+
+Chọn accelerator **GPU T4 ×2**, gắn model GGUF ở bước 1 qua **Add Input**, rồi kết nối `kgl` với URL của phiên mới từ môi trường `myenv`. Bản build CUDA cho T4 nằm trong dataset riêng tư của tài khoản `thanhduy1022`. Lệnh dưới đây gắn đúng phiên bản bằng `kagglehub` trong notebook. [Dataset llama.cpp SM75, phiên bản 1](https://www.kaggle.com/datasets/thanhduy1022/llama-cpp-f4f6f2e-sm75-214105c7/versions/1)
+
+Kaggle đã giải nén file tar khi tạo dataset. Thư mục gốc của input chứa thư mục mang tên commit. Từ terminal ở bước 1, chạy:
+
+```bash
+kgl exec --timeout 180 <<'PYTHON'
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import shutil
+import subprocess
+import kagglehub
+
+rev = "f4f6f2e7db76e98c95cc9b7fc608ea669c806044"
+package = Path("/tmp/kgl/llama") / rev
+if not package.exists():
+    dataset = kagglehub.dataset_download(
+        "thanhduy1022/llama-cpp-f4f6f2e-sm75-214105c7/versions/1"
+    )
+    package.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(dir=package.parent) as tmp:
+        restored = Path(tmp) / rev
+        shutil.copytree(Path(dataset) / rev, restored)
+        binary = restored / "llama"
+        binary.chmod(binary.stat().st_mode | 0o100)
+        subprocess.run([str(binary), "serve", "--version"], check=True)
+        restored.rename(package)
+PYTHON
+kgl exec --shell --timeout 20 "test -s '$MANIFEST' && '$PACKAGE/llama' serve --version"
+```
+
+Khi binary in commit `f4f6f2e`, chuyển thẳng sang bước 3, dùng `--llama-manifest "$MANIFEST"` và `--model "$GGUF"`. Để tiếp tục chat sau hai request thử, giữ server đang chạy và chỉ dùng `kgl serve stop` khi muốn kết thúc. Nếu thư mục input hoặc dataset riêng tư không truy cập được, kiểm tra tài khoản và phiên bản dataset. Nếu binary báo thiếu thư viện CUDA, kiểm tra bằng `ldd "$PACKAGE/llama"` trên VM trước khi build lại.
 
 ## 2. Build khi thiếu binary tương thích
 
@@ -58,23 +123,15 @@ Trình cài dùng `GGML_CUDA=ON`, `CMAKE_CUDA_ARCHITECTURES=75` và build Releas
 
 **Nếu local hết thời gian chờ:** trong lần thử, timeout 1800 giây xảy ra sau khi thư viện CUDA đã link xong. Build vẫn chạy trên Kaggle và manifest xuất hiện sau khoảng 2108 giây kể từ lúc bắt đầu. Đợi notebook xử lý xong lệnh đang chạy, rồi kiểm tra lại manifest và `llama serve --version` như bước 1 trước khi chạy một build khác. Timeout 3600 giây trong lệnh trên có dư thời gian so với lần đã đo.
 
-### Dùng lại build khi đổi phiên Kaggle
+### Lưu trữ bản build
 
-Trong cùng phiên, dùng thẳng thư mục `$PACKAGE`. Để thử dùng lại trên một phiên mới có cùng kiến trúc GPU, hệ điều hành và thư viện CUDA tương thích, lưu **cả thư mục**, gồm binary, các file `.so` và manifest, dưới dạng tar để giữ quyền executable.
+Để lưu một bản build mới, đóng gói cả thư mục commit (binary, thư viện `.so` và `manifest.json`). Ví dụ với các biến ở bước 1:
 
 ```bash
 kgl exec --shell --timeout 120 "tar -C '$BUILD_ROOT' -cf /kaggle/working/llama-f4f6f2e-sm75.tar '$REV'"
 ```
 
-Lưu file tar vào bộ lưu trữ riêng hoặc một Kaggle dataset trước khi kết thúc phiên. Ở phiên mới, gắn tar qua **Add Input**, đặt `BUILD_ROOT` và `MANIFEST` như ở bước 1, rồi thay `TAR_INPUT` bằng đường dẫn thật trên VM.
-
-```bash
-TAR_INPUT=/kaggle/input/your-build-dataset/llama-f4f6f2e-sm75.tar
-kgl exec --shell --timeout 120 "test -r '$TAR_INPUT' && test ! -e '$PACKAGE' && mkdir -p '$BUILD_ROOT' && tar -C '$BUILD_ROOT' -xf '$TAR_INPUT'"
-kgl exec --shell --timeout 20 "test -s '$MANIFEST' && '$PACKAGE/llama' serve --version"
-```
-
-Nếu binary chạy và in đúng commit, chuyển sang bước 3. Tiếp tục dùng GGUF từ mount riêng của model.
+Đưa riêng file tar vào một Kaggle Dataset riêng tư. Bản dùng trong hướng dẫn đã được lưu ở phiên bản 1. File tar gốc có SHA-256 `214105c7da0501b68bbc49746c7095b67f2510e66ac9a658cf4922c288bb272f`.
 
 ## 3. Nạp model và chạy hai request
 
@@ -115,15 +172,20 @@ Cả hai phản hồi cần có `text` chứa `Paris` và `finish_reason: stop`.
 | Streaming | `Paris`, 2,03 giây, 1,85 giây tới nội dung đầu tiên, dùng lại 19 token prompt cache |
 | Sau khi dừng server | Hai GPU về 0 MiB sử dụng |
 
-Health báo `offloaded_layers: null`, nên số lớp offload chưa được xác nhận. Phép thử này kiểm chứng cấu hình context 4096 với prompt ngắn. Context dài, tải kéo dài và khôi phục gói tar trên một phiên mới cần phép thử riêng.
+Health báo `offloaded_layers: null`, nên số lớp offload chưa được xác nhận. Phép thử này kiểm chứng cấu hình context 4096 với prompt ngắn. Đã đối chiếu SHA-256 từng file từ dataset với bản build gốc và chạy binary khôi phục trong thư mục tạm trên cùng VM. Trên VM mới, đã khôi phục build, nạp model và kiểm tra cả hai chế độ inference. Context dài đã được đo riêng ở mục dưới. Tải kéo dài vẫn cần phép thử riêng. [Kết quả khôi phục trên VM mới](../../docs/reports/2026-11-23-qwen-m1.md)
 
 ## Thử context theo nhu cầu
 
-Dùng cùng GGUF Q4_K_M, bản build và tensor split `1,1` ở các mốc **4096 → 8192 → 16384 → 32768 → 65536**. Chỉ tăng khi hội thoại hoặc tài liệu thực tế cần thêm chỗ. 65536 là giới hạn của kế hoạch thử. Mốc đã chạy thành công trong tài liệu này là 4096.
+**32.768 token là mặc định của `ready.py` cho chat, tóm tắt, biên tập và trích xuất văn bản.** Mốc này xử lý prompt thử 25.459 token, cho nội dung đầu tiên sau 17,23 giây và còn 4.375 MiB trên GPU có ít bộ nhớ trống hơn. Với prompt đối chứng khoảng 2.000 token, thời gian tới nội dung đầu tiên là 2,61 giây. [Bảng số đo context](../../docs/reports/2026-11-24-qwen-m3-5.md)
 
-1. Lưu kết quả ở mốc hiện tại. Khi có thể gián đoạn chat, dừng proxy và chạy `kgl serve stop` để giải phóng trọng số trước khi đo lại bằng `model plan`. Nếu đo khi model cũ còn chạy, planner sẽ tính khả năng nạp thêm một bản model vào VRAM còn trống.
-2. Đặt `CTX=8192` cho lần tăng đầu tiên. Dùng `--ctx "$CTX"` trong cả lệnh plan và start ở bước 3. Xác nhận `health.n_ctx` đúng mốc mới, rồi mở lại proxy để demo kết nối đúng instance.
-3. Chạy lại một prompt ngắn làm mốc. Tiếp theo, đưa một mã nhận dạng vào đầu hội thoại, gửi đủ văn bản để vượt cửa sổ trước đó rồi yêu cầu model nhắc lại mã. Chừa chỗ cho câu trả lời và kiểm tra số token đầu vào từ `usage.prompt_tokens` của request không streaming khi cần xác nhận độ dài.
-4. Ghi độ trễ tới nội dung đầu tiên, tốc độ sinh token, VRAM từng card trong lúc xử lý prompt dài và kết quả nhớ mã. Nếu gặp OOM hoặc độ trễ vượt mức chấp nhận được, khởi động lại ở mốc gần nhất đã đạt.
+Khi worker hiện tại đang rảnh và bạn muốn đổi context, chạy lần lượt trong `myenv` với cùng `KGL_HOME`:
+
+```bash
+kgl serve stop
+python examples/qwen35b-llama/ready.py --ctx 32768
+python examples/qwen35b-llama/proxy.py
+```
+
+Dùng `--ctx 65536` khi cần cửa sổ lớn hơn, hoặc `--ctx 4096` để trở về cấu hình ban đầu. Mốc 262.144 được ghi lại trong báo cáo benchmark. Khi worker đang chạy ở context khác mặc định, truyền lại cùng giá trị `--ctx` để dùng lại worker. GUI lấy context thực tế qua `/ready`. Client gửi prompt rất dài cần chừa thời gian nhận token đầu tiên và kiểm tra giới hạn kích thước HTTP của proxy.
 
 Kiểm tra câu trả lời cố định của model đang chạy từ thư mục gốc repo bằng `python examples/qwen35b-llama/check_answer.py`.
