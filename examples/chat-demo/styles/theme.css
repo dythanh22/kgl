@@ -1,0 +1,168 @@
+:root {
+  color-scheme: light;
+  --bg: #f3f6f6;
+  --surface: #ffffff;
+  --surface-subtle: #f7fafa;
+  --surface-hover: #ebf1f1;
+  --border: #d8e2e2;
+  --border-strong: #b6c5c7;
+  --text: #18272c;
+  --text-secondary: #4c6268;
+  --text-muted: #6c8086;
+  --accent: #0f766e;
+  --accent-hover: #0c625b;
+  --accent-soft: #e6f4f2;
+  --accent-border: #b9dfd9;
+  --user-bg: #e7f4f2;
+  --user-border: #c5e3de;
+  --code-bg: #f0f4f5;
+  --code-head: #e4ebeb;
+  --warn: #9a4d00;
+  --warn-bg: #fffaeb;
+  --warn-border: #f3d285;
+  --danger: #b42318;
+  --danger-bg: #fef3f2;
+  --danger-border: #f7c2be;
+  --ok: #0f7b55;
+  --shadow-sm: 0 1px 2px rgba(15, 35, 40, .06);
+  --shadow-md: 0 6px 20px rgba(15, 35, 40, .09);
+  --radius: .75rem;
+  --font-sans: "Inter", "Source Sans 3", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 15px/1.55 var(--font-sans);
+  color: var(--text);
+  background: var(--bg);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1c1c1e;
+  --surface: #232325;
+  --surface-subtle: #2e2e31;
+  --surface-hover: #38383c;
+  --border: #38383c;
+  --border-strong: #515159;
+  --text: #ececef;
+  --text-secondary: #b2b2bb;
+  --text-muted: #a0a0ab;
+  --accent: #797dc7;
+  --accent-hover: #696db8;
+  --accent-soft: #323248;
+  --accent-border: #4e4e70;
+  --user-bg: #323235;
+  --user-border: #39393d;
+  --code-bg: #11181b;
+  --code-head: #1c272b;
+  --warn: #f7b955;
+  --warn-bg: #2a2011;
+  --warn-border: #5c441c;
+  --danger: #f97066;
+  --danger-bg: #2d1618;
+  --danger-border: #5c2529;
+  --ok: #34d399;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .25);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, .35);
+}
+
+* { box-sizing: border-box }
+[hidden] { display: none !important }
+html, body { height: 100%; margin: 0 }
+body { display: flex; flex-direction: column; overflow: hidden; background: var(--bg); color: var(--text) }
+h1, h2, h3, h4, p { margin: 0 }
+input, textarea, button, select { font: inherit }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1) }
+  50% { opacity: .45; transform: scale(.85) }
+}
+
+/* Buttons */
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .35rem;
+  border: 1px solid transparent;
+  border-radius: .5rem;
+  padding: .42rem .8rem;
+  background: var(--accent);
+  color: #fff;
+  font-size: .86rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .14s ease, border-color .14s ease, color .14s ease, opacity .14s ease;
+  white-space: nowrap;
+}
+button:hover:not(:disabled) { background: var(--accent-hover) }
+button:disabled { opacity: .48; cursor: not-allowed }
+
+.btn-secondary {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+}
+.btn-secondary:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--border-strong) }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: transparent;
+  padding: .34rem .55rem;
+}
+.btn-ghost:hover:not(:disabled) { background: var(--surface-hover); color: var(--text) }
+
+.btn-danger {
+  background: transparent;
+  color: var(--danger);
+  border-color: transparent;
+  padding: .34rem .55rem;
+}
+.btn-danger:hover:not(:disabled) { background: var(--danger-bg); border-color: var(--danger-border) }
+
+.btn-stop {
+  background: var(--danger);
+  color: #fff;
+}
+.btn-stop:hover:not(:disabled) { background: #911c13 }
+
+.btn-icon {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  font-size: 1rem;
+}
+
+.chip {
+  font-size: .75rem;
+  font-weight: 500;
+  padding: .18rem .55rem;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.chip:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-soft) }
+
+.copy {
+  font-size: .75rem;
+  font-weight: 600;
+  padding: .18rem .5rem;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: .35rem;
+}
+.copy:hover:not(:disabled) { background: var(--surface-hover); color: var(--text) }
