@@ -16,15 +16,15 @@ V3 gồm khởi động và phục hồi, ứng dụng chat, API dùng chung cho
 
 ## Mục tiêu đo được
 
-Mỗi chỉ số dưới đây có ngưỡng đạt/không đạt. Ngưỡng được chốt bằng số liệu của lần đo đầu tiên ở mốc M0 và ghi vào bảng này trước khi bắt đầu M2. Các lần nghiệm thu sau so với cùng ngưỡng.
+Dùng ngưỡng M0 dưới đây cho các lượt hiệu chỉnh và nghiệm thu tiếp theo. M0 ghi đường cơ sở của cấu hình hiện tại và chốt tiêu chí trước khi chọn cấu hình ứng viên. [Báo cáo M0](reports/2026-11-25-qwen-m0.md)
 
 | Chỉ số | Điều kiện đo | Ngưỡng |
 |---|---|---|
-| VM mới → câu trả lời đầu tiên | Từ lúc kết nối phiên tới khi nhận nội dung đầu tiên. Ghi riêng thời gian khôi phục build và thời gian nạp model | Chốt sau M0 |
-| Số bước thủ công khi đổi VM | Đếm theo danh sách ở mục 1 | Chốt sau M0 |
-| Thời gian tới nội dung đầu tiên | Prompt khoảng 2000 token, không dùng prompt cache, ghi cả có và không có reasoning | Chốt sau M0 |
-| Tốc độ sinh | Token/giây trên câu trả lời khoảng 500 token | Chốt sau M0 |
-| Chất lượng | Bộ prompt đánh giá ở mục 4 | Tỷ lệ đạt chốt sau M0 |
+| VM mới → câu trả lời đầu tiên | Bắt đầu lúc gọi connect với notebook và input đã chuẩn bị. Ghi riêng connect, ready.py và chuyển proxy → content đầu | Mục tiêu M4 ≤300 s từ connect tới content đầu và ≤250 s riêng ready.py. Mốc lịch sử ready.py là 204,341 s. |
+| Số bước thủ công khi đổi VM | Đếm nhóm thao tác theo checklist M0 và ghi bước phát sinh | ≤6 nhóm thao tác |
+| Thời gian tới nội dung đầu tiên | Từ máy local qua SSE, prompt khoảng 2.000 token, cache_n=0. Ghi riêng từng chế độ reasoning đã xác minh. | Trung vị ≤12 s và mỗi ca ≤20 s. Ca thiếu content hoặc kết thúc dở trượt ngưỡng. |
+| Tốc độ sinh | Trung vị predicted_per_second của các lượt hoàn tất, khoảng 500 token sinh gồm reasoning khi có | ≥60 token/s |
+| Chất lượng | Chấm 16 ca theo rubric cố định và kiểm trạng thái hoàn tất | ≥14/16, tất cả ca bắt buộc đạt, mọi ca trích xuất đạt tiêu chí giữ đúng người và hạn, phản hồi được tính đạt phải hoàn tất. |
 
 ## Kiến trúc và vòng đời dữ liệu
 
@@ -91,7 +91,7 @@ Mở rộng giao diện hiện có và đọc được hội thoại đã lưu. 
 - [x] M3.2 · Sao lưu và khôi phục JSON, xử lý ID trùng và bộ nhớ đầy.
 - [x] M3.3 · Giữ phản hồi dở, Dừng, Thử lại và kiểm tra readiness trước khi gửi tiếp sau khi dừng. Trạng thái hủy phía worker được giữ là chưa xác nhận khi proxy chưa có xác nhận.
 - [x] M3.4 · Markdown an toàn, sao chép, ước tính thời gian phiên và nhập lại bearer key.
-- [x] M3.5 · Ngân sách theo context thực tế, kiểm tra ở 4096 và đo tới 262.144 trên hai T4. Giới hạn đầu ra GUI tạm đặt 768, còn hiệu chỉnh khi có bộ đánh giá M0.
+- [x] M3.5 · Ngân sách theo context thực tế, kiểm tra ở 4096 và đo tới 262.144 trên hai T4. Mặc định trước L8 là 768. L8 dùng 1.024 khi Thinking tắt và 2.048 khi bật trên worker hỗ trợ.
 
 [Báo cáo kiểm thử Firefox và Qwen](reports/2026-11-24-qwen-m3-1-to-4.md)
 
@@ -99,7 +99,7 @@ Mở rộng giao diện hiện có và đọc được hội thoại đã lưu. 
 
 GUI lấy cửa sổ từ `/ready`, ưu tiên `health.n_ctx`. Ngân sách gồm chỉ dẫn hệ thống, các lượt gửi, reasoning và câu trả lời. Worker dùng 32.768 token làm mặc định cho công việc văn bản hằng ngày. Cấu hình 4096 tiếp tục là một mốc kiểm tra.
 
-- **Dành chỗ cho đầu ra.** Khi worker báo context, GUI dùng giới hạn ban đầu 768 token, có thể sửa mỗi lượt. Mốc này dành chỗ cho reasoning và câu trả lời, dựa trên các ca mẫu trước đó. Dùng bộ đánh giá rộng hơn của M0 để hiệu chỉnh. Giá trị trong preset vẫn áp dụng cho caller dùng API mà bỏ qua giới hạn đầu ra.
+- **Dành chỗ cho đầu ra.** Với preset Qwen 32.768, GUI bắt đầu với Thinking tắt và dành tối đa 2.048 token để trả lời. Chọn 4.096 cho báo cáo dài hoặc nhập giới hạn riêng. Khi bật Thinking, reasoning và câu trả lời chia sẻ giới hạn này. Worker cũ dùng 768. Caller API bỏ qua giới hạn đầu ra dùng mặc định trong preset. [Số đo cấu hình trước đây](reports/2026-11-25-qwen-l5-l8.md)
 - **Kiểm tra trước khi gửi.** GUI hiển thị số message được chọn, ước tính đầu vào, giới hạn đầu ra và context. Khi tổng ước tính vượt cửa sổ, người dùng có thể giảm lịch sử hoặc giới hạn đầu ra. Nếu vẫn muốn gửi, cần xác nhận. Lỗi vượt context từ upstream được hiển thị trong kết quả API hoặc GUI.
 - **Đếm token.** GUI dùng ước tính từ số byte UTF-8 và số đơn vị từ, số, dấu câu, rồi cộng dự phòng template và từng message. Sau mỗi lượt, hiển thị usage thực tế của worker.
 - **Reasoning trong lịch sử.** Chỉ gửi `role` và `content` của các lượt cũ, không gửi reasoning. Demo hiện đã làm vậy, cần giữ nguyên và có phép thử.
@@ -138,9 +138,9 @@ Tích hợp VS Code và coding agent được để ngỏ cho một mốc riêng
 
 ## 4. Đánh giá chất lượng cho công việc hằng ngày
 
-Lập bộ 10–20 prompt từ công việc thật, gồm cả tiếng Việt và tiếng Anh, gồm tóm tắt văn bản, soạn hoặc chỉnh sửa nội dung, trích xuất đầu việc, đối chiếu thông tin trong văn bản được cung cấp và hội thoại nhiều lượt cần nhớ thông tin từ lượt đầu. Mỗi prompt có tiêu chí đạt cụ thể như giữ đủ ý bắt buộc, dùng đúng ngôn ngữ, trích xuất đúng trường hoặc nhắc lại đúng dữ kiện. Lưu bộ prompt và tiêu chí trong repository, không chứa dữ liệu nhạy cảm.
+Bộ M0 có 16 ca nghiệp vụ mẫu, tám tiếng Việt và tám tiếng Anh. Các ca bao phủ tóm tắt, soạn hoặc chỉnh sửa, trích xuất, đối chiếu nguồn và dùng lại thông tin từ các lượt trước. Mỗi ca có rubric và một số ca được đánh dấu bắt buộc. Dùng runner và rubric để chạy lại khi đổi model, quant, build, context hoặc cấu hình sinh. [Bộ ca, runner và hướng dẫn chấm](../examples/qwen35b-llama/eval/README.md)
 
-Chạy bộ này ở M0 để xác nhận model đủ dùng và để chốt `max_tokens` mặc định. Chạy lại khi đổi model, quant, build hoặc context để làm mốc hồi quy. Ghi kết quả theo từng prompt cùng thời gian tới nội dung đầu tiên và usage.
+L1–L2 đo giới hạn đầu ra hiện tại trên ba profile. L5 xác minh Thinking để có thể đo chế độ tắt, L6 chọn `max_tokens` và sampling từ các phép thử có đối chứng.
 
 ## 5. Tool calling sau mốc phát hành đầu tiên
 
@@ -154,13 +154,13 @@ Thứ tự nghiệm thu là M0 → M1 → M2 → M3 → M4. Ca khôi phục bằ
 
 | Mốc | Trạng thái nghiệm thu | Điều kiện còn lại |
 |---|---|---|
-| M0 · Đo mốc ban đầu | **Đạt một phần.** Đã nhận câu trả lời trên VM mới từ build khôi phục. | Đo toàn bộ thời gian từ kết nối đến nội dung đầu tiên, đếm bước thủ công, đo prompt khoảng 2000 token và đầu ra khoảng 500 token theo bảng chỉ số. Chạy bộ 10–20 prompt, chốt ngưỡng và `max_tokens` mặc định. |
+| M0 · Đo mốc ban đầu | **Đã có đường cơ sở L1–L2 và ngưỡng nghiệm thu.** | Các cấu hình hiện tại còn trượt ca chất lượng. L5–L6 đã xác minh tắt Thinking và chọn giới hạn GUI. M4 đo thời gian từ connect tới content đầu và đếm thao tác thực tế. |
 | M1 · Khởi động và phục hồi | **Đạt checklist chức năng.** Đã chạy ready từ VM trống, chuyển proxy, mở lại lịch sử mẫu và gọi API tại cùng origin. | Chi tiết phạm vi bằng chứng ở mục 1. |
 | M2 · API cho chat và script | **Đạt M2.1–M2.6.** Cùng chat và script chạy thành công qua hai VM. | Kết quả JSON, SSE, lịch sử và lỗi stream trong báo cáo ở mục 3. |
-| M3 · Ứng dụng chat | **Đạt M3.1–M3.5.** | M0 còn hiệu chỉnh giới hạn đầu ra trên tập tác vụ rộng hơn. |
-| M4 · Ca xuyên suốt và phát hành | **Chờ nghiệm thu.** | Chạy checklist phát hành xuyên suốt theo Điều kiện phát hành và lưu báo cáo. |
+| M3 · Ứng dụng chat | **Đạt M3.1–M3.5 và hồi quy L8.** | M4 kiểm GUI xuyên suốt qua hai VM. |
+| M4 · Ca xuyên suốt và phát hành | **Đã chạy qua hai VM, chưa đạt điều kiện phát hành.** | Khôi phục, bàn giao proxy và chat/API đã qua kiểm. Cả hai VM đạt 12/16 và còn ca bắt buộc trượt. [Báo cáo M4](reports/2026-11-25-qwen-m4.md) |
 
-Số đo M1 là kết quả của một lần chạy. Prompt ngắn lặp lại đã dùng 19 token cache ở lượt streaming; phép đo TTFT cho prompt khoảng 2000 token không cache ở M0 vẫn đang chờ. Tool calling (mục 5) chờ nghiệm thu riêng sau mốc phát hành đầu tiên.
+Số đo đổi VM lịch sử áp dụng đúng phạm vi mỗi báo cáo. Tool calling (mục 5) chờ nghiệm thu riêng sau mốc phát hành đầu tiên.
 
 ## Rủi ro
 

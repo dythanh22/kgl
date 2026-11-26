@@ -213,7 +213,7 @@ Ghi **PASS**, **FAIL** hoặc **chưa xác minh** cho từng mục. Chỉ ghi �
 
 ## llama.cpp GGUF (experimental)
 
-Với GGUF đã gắn vào Kaggle, dùng [quy trình build và nghiệm thu Qwen 35B](../examples/qwen35b-llama/QWEN35B-KAGGLE.md) để kiểm tra build sẵn có, xử lý lỗi CUDA và chạy lại hai request. Các bước dưới đây mô tả luồng GGUF tổng quát.
+Với GGUF đã gắn vào Kaggle, dùng [quy trình build và nghiệm thu Qwen 35B](../examples/qwen35b-llama/BUILD.md) để kiểm tra build sẵn có, xử lý lỗi CUDA và chạy lại hai request. Các bước dưới đây mô tả luồng GGUF tổng quát.
 
 1. Lấy một commit llama.cpp từ upstream, giữ lại full SHA dùng cho bài thử, rồi chạy lệnh build trên notebook cần kiểm. Lệnh trả JSON với đường dẫn `manifest`, lệnh khởi động, cờ đã dò qua `--help` và phiên bản. Nếu đã có build tương ứng, lệnh kiểm tra binary và trả lại manifest đó. Phiên local ghi đường dẫn manifest để `serve start --preset` dùng trực tiếp.
 
