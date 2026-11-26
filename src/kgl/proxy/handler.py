@@ -28,9 +28,8 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
     last_health = None
     admission = threading.Lock()
     serve = rt.session.serve
-    qwen_alias = (serve is not None and serve.backend == "llama" and bool(serve.instance)
-                  and serve.model == model_name
-                  and Path(model_name).name == "Qwen3.8-35B-A3B-Q4_K_M.gguf")
+    alias = (serve.alias if serve and serve.backend == "llama" and serve.instance
+             and serve.model == model_name and serve.quant else None)
 
     class Handler(BaseHTTPRequestHandler):
         timeout = 10
@@ -78,8 +77,8 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
                 return self._json(code, result, retry_after=result.get("state") == "busy")
             if self.path in ("/v1/models", "/models"):
                 models = [{"id": model_name, "object": "model"}]
-                if self.path == "/v1/models" and qwen_alias and self._readiness()[0] == 200:
-                    models.insert(0, {"id": "qwen-local", "object": "model"})
+                if self.path == "/v1/models" and alias and alias != model_name and self._readiness()[0] == 200:
+                    models.insert(0, {"id": alias, "object": "model"})
                 return self._json(200, {"object": "list", "data": models})
             self._err(404, "not found")
 
@@ -87,10 +86,13 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
             nonlocal last_health
             deadline = time.monotonic() + 5
             expected = rt.session.serve
-            try:
-                kernel = rt.client.get_kernel(rt.session.kernel_id, timeout=5)
-            except (KglError, TimeoutError) as exc:
-                return self._readiness_error(exc, "kernel_rest_unavailable")
+            kernel = {}
+            if not admission.locked():
+                try:
+                    kernel = rt.client.get_kernel(rt.session.kernel_id, timeout=5)
+                except (KglError, TimeoutError) as exc:
+                    if not admission.locked():
+                        return self._readiness_error(exc, "kernel_rest_unavailable")
             if kernel.get("execution_state") == "busy" or admission.locked():
                 result = {"state": "busy", "instance": expected.instance if expected else None,
                           "approx_session_remaining_s": None}
@@ -111,7 +113,10 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
             result["approx_session_remaining_s"] = rt.settings.approx_session_remaining(uptime)
             matches = (health.get("model") == model_name
                        and (not expected or (health.get("backend") == expected.backend
-                                             and health.get("instance") == expected.instance)))
+                                             and health.get("instance") == expected.instance
+                                             and (not expected.alias or (
+                                                 health.get("alias") == expected.alias
+                                                 and health.get("quant") == expected.quant)))))
             last_health = (time.monotonic(), health, uptime) if matches else None
             if result["state"] == "ready":
                 if not matches:
@@ -148,7 +153,7 @@ def make_proxy_handler(rt: Runtime, port: int, model_name: str, api_key: str | N
                 if spec.passthrough:
                     if not isinstance(req, dict):
                         raise ValueError("request must be a JSON object")
-                    if qwen_alias and req.get("model") == "qwen-local":
+                    if alias and req.get("model") == alias:
                         req["model"] = model_name
                     req = chat_defaults(req, serve.defaults)
                     chat_args(req, model_name, serve.capabilities)

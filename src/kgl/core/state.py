@@ -45,11 +45,13 @@ class ServeRecord:
     dir: str | None = None
     capabilities: dict = field(default_factory=dict)
     defaults: dict = field(default_factory=dict)
+    alias: str | None = None
+    quant: str | None = None
 
     def __post_init__(self):
         if (type(self.port) is not int or not 1 <= self.port <= 65535
                 or not isinstance(self.model, str) or not isinstance(self.backend, str)
-                or any(v is not None and not isinstance(v, str) for v in (self.instance, self.state, self.dir))
+                or any(v is not None and not isinstance(v, str) for v in (self.instance, self.state, self.dir, self.alias, self.quant))
                 or not isinstance(self.capabilities, dict) or not isinstance(self.defaults, dict)):
             raise ValueError("invalid serve record")
 

@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
+DATASET_ID = "owner/test-build/versions/2"
+
 SCRIPT = Path(__file__).resolve().parents[1] / "examples/qwen35b-llama/restore_worker.py"
 spec = importlib.util.spec_from_file_location("restore_worker", SCRIPT)
 worker = importlib.util.module_from_spec(spec)
@@ -38,22 +40,24 @@ class QwenReadyTests(unittest.TestCase):
         self.addCleanup(gpu_patch.stop)
 
     def prepare(self):
-        return worker.prepare(self.model, self.package, self.root)
+        return worker.prepare(self.model, self.package, self.root, DATASET_ID, "Q4_K_M")
 
     def test_restore_then_reuse_recorded_port(self):
         self.assertGreater(self.prepare(), 0)
         (self.root / ".kgl").mkdir()
         (self.root / ".kgl/serve.json").write_text('{"args":["--port","49409"]}')
         self.assertEqual(self.prepare(), 49409)
-        self.hub.dataset_download.assert_called_once_with(
-            "thanhduy1022/llama-cpp-f4f6f2e-sm75-214105c7/versions/1"
-        )
+        self.hub.dataset_download.assert_called_once_with(DATASET_ID)
 
     def test_bad_manifest_leaves_destination_retryable(self):
         (self.source / "manifest.json").write_text('{"revision":"other","cuda_arch":75}')
         with self.assertRaisesRegex(ValueError, "Unexpected llama.cpp build"):
             self.prepare()
         self.assertFalse(self.package.exists())
+        (self.source / "manifest.json").write_text(json.dumps({
+            "revision": self.package.name, "cuda_arch": 75,
+        }))
+        self.assertGreater(self.prepare(), 0)
 
     def test_missing_input_or_gpu(self):
         self.cards.return_value = "Tesla T4\n"

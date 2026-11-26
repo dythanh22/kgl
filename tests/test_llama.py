@@ -19,6 +19,7 @@ from kgl.cli import main
 from kgl.client.serve_manager import ServeManager
 from kgl.client.infer import infer_chat
 from kgl.proxy.handler import make_proxy_server
+from kgl.protocol import chat_args
 from kgl.core.state import ServeRecord, SessionStore
 from kgl.vm import llama_tools
 from .support import FakeEnvTest
@@ -59,6 +60,10 @@ class Handler(BaseHTTPRequestHandler):
         prompt = req["messages"][-1]["content"]
         finish = "length" if prompt == "short" else "stop"
         text = None if finish == "length" else "answer"
+        if prompt == "echo-options":
+            fields = ("chat_template_kwargs", "presence_penalty", "repeat_penalty", "response_format",
+                      "temperature", "top_p", "top_k", "max_tokens")
+            text = json.dumps({key: req[key] for key in fields if key in req})
         usage = {"prompt_tokens": 6, "completion_tokens": 2, "total_tokens": 8}
         timings = {"prompt_per_second": 140.0, "predicted_per_second": 17.0}
         if not req.get("stream"):
@@ -114,7 +119,10 @@ class LlamaTests(FakeEnvTest):
         manifest.write_text(json.dumps({"argv": ["llama-server"], "options": options}))
         self.model = str(model)
         self.settings_llama = {"llama_manifest": str(manifest), "ctx": 2048,
-                               "settings": {"capabilities": {"reasoning": True, "top_k": True},
+                               "settings": {"alias": "qwen-local", "quant": "Q4_K_M",
+                                            "capabilities": {"reasoning": True, "top_k": True, "enable_thinking": True,
+                                                             "presence_penalty": True, "repeat_penalty": True,
+                                                             "response_format": True, "json_schema": True},
                                             "defaults": {"max_tokens": 10, "top_k": 20, "timeout": 10}}}
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
@@ -209,6 +217,43 @@ class LlamaTests(FakeEnvTest):
                                        "--ctx", "2048", "--port", str(self.manager.port), "--wait-timeout", "10"]), 0)
         self.assertEqual(store.load().serve.state, "ready")
 
+    def test_verified_attached_quant_alias_and_same_basename_outside_preset(self):
+        self.manager.stop(self.health["instance"])
+        self.rt.session.serve = None
+        self.rt.session.llama_manifest = self.settings_llama["llama_manifest"]
+        store = SessionStore(Path(self.home))
+        store.save(self.rt.session)
+        path = Path(self.workdir) / "alternate" / "example-IQ4_XS.gguf"
+        path.parent.mkdir()
+        path.write_bytes(b"GGUF second quant")
+        preset = Path(self.home) / "example.json"
+        metadata = {"repo": "example/model", "revision": "main", "default_quant": "IQ4_XS",
+                    "files": {"IQ4_XS": path.name}, "checksum_file": "SHA256SUMS",
+                    "checksums": {"IQ4_XS": hashlib.sha256(path.read_bytes()).hexdigest()},
+                    "inputs": {"IQ4_XS": str(path)}, "alias": "portable-local", "context": 4096}
+        preset.write_text(json.dumps(metadata))
+        args = ["serve", "start", "--preset", str(preset), "--ctx", "2048",
+                "--port", str(self.manager.port), "--wait-timeout", "10"]
+        with patch.dict(os.environ, KGL_HOME=self.home, KGL_WORKDIR=self.workdir), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as stderr:
+            code = main([*args, "--model", str(path)])
+            self.assertEqual(code, 0, stderr.getvalue())
+            record = store.load().serve
+            self.assertEqual((record.alias, record.quant, record.model), ("portable-local", "IQ4_XS", str(path)))
+            health = self.manager.health()["health"]
+            self.assertEqual((health["alias"], health["quant"], health["n_ctx"]), ("portable-local", "IQ4_XS", 2048))
+            self.assertEqual(main([*args, "--model", str(path)]), 0)
+            self.assertEqual(store.load().serve.instance, record.instance)
+            self.assertEqual(main(["serve", "stop"]), 0)
+            other = Path(self.workdir) / path.name
+            other.write_bytes(b"GGUF wrong model")
+            self.assertEqual(main([*args, "--model", str(other)]), 0)
+            self.assertIsNone(store.load().serve.alias)
+            self.assertEqual(main(["serve", "stop"]), 0)
+            path.write_bytes(b"wrong model at the attached path")
+            self.assertNotEqual(main([*args, "--model", str(path)]), 0)
+            self.assertIsNone(store.load().serve)
+
     def test_proxy_preserves_reasoning_and_rejects_unverified_tools(self):
         proxy = make_proxy_server(self.rt, self.manager.port, self.model, listen_port=0)
         thread = threading.Thread(target=proxy.serve_forever, daemon=True)
@@ -229,6 +274,45 @@ class LlamaTests(FakeEnvTest):
             proxy.server_close()
             thread.join()
 
+    def test_optional_llama_fields_reach_upstream_from_proxy_and_gateway(self):
+        options = {"chat_template_kwargs": {"enable_thinking": False}, "presence_penalty": 0.5,
+                   "repeat_penalty": 1.1, "response_format": {"type": "json_schema", "json_schema": {
+                       "name": "sample", "schema": {"type": "object"}}},
+                   "max_completion_tokens": 42, "temperature": 0.6, "top_p": 0.95}
+        payload = {"messages": [{"role": "user", "content": "echo-options"}], **options}
+        expected = {**options, "max_tokens": options["max_completion_tokens"], "top_k": 20}
+        del expected["max_completion_tokens"]
+        direct = infer_chat(self.rt, self.manager.port, payload, timeout=10)
+        self.assertEqual(direct.status, 200)
+        self.assertEqual(json.loads(direct.text), expected)
+        with make_proxy_server(self.rt, self.manager.port, self.model, listen_port=0) as proxy:
+            thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+            thread.start()
+            base = f"http://127.0.0.1:{proxy.server_port}/v1/chat/completions"
+
+            def post(body):
+                request = urllib.request.Request(base, json.dumps(body).encode(),
+                                                 {"Content-Type": "application/json"})
+                return urllib.request.urlopen(request, timeout=10)
+
+            try:
+                with post(dict(payload, stream=True)) as response:
+                    events = [line[6:].strip() for line in response if line.startswith(b"data: ")]
+                self.assertEqual(events[-1], b"[DONE]")
+                chunks = [json.loads(event) for event in events[:-1]]
+                content = "".join(choice.get("delta", {}).get("content", "")
+                                  for chunk in chunks for choice in chunk.get("choices", []))
+                self.assertEqual(json.loads(content), expected)
+                invalid = dict(payload, chat_template_kwargs={"enable_thinking": "false"})
+                self.assertEqual(infer_chat(self.rt, self.manager.port, invalid, timeout=10).status, 400)
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    post(invalid)
+                with caught.exception as error:
+                    self.assertEqual(error.code, 400)
+            finally:
+                proxy.shutdown()
+                thread.join()
+
     def test_proxy_qwen_alias_and_canonical_id(self):
         with make_proxy_server(self.rt, self.manager.port, self.model, listen_port=0) as proxy:
             threading.Thread(target=proxy.serve_forever, daemon=True).start()
@@ -247,6 +331,13 @@ class LlamaTests(FakeEnvTest):
 
             try:
                 self.assertEqual(list_models(), ["qwen-local", self.model])
+                self.rt.session.serve.instance = "different-instance"
+                self.assertEqual(list_models(), [self.model])
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    post("qwen-local", False)
+                with caught.exception as error:
+                    self.assertEqual(error.code, 409)
+                self.rt.session.serve.instance = self.health["instance"]
                 for model in ("qwen-local", self.model):
                     for stream in (False, True):
                         with self.subTest(model=model, stream=stream), post(model, stream) as response:
@@ -270,6 +361,19 @@ class LlamaTests(FakeEnvTest):
             finally:
                 proxy.shutdown()
 
+    def test_legacy_record_with_qwen_basename_has_canonical_id_only(self):
+        self.rt.session.serve = ServeRecord(model=self.model, backend="llama", port=self.manager.port,
+                                            instance=self.health["instance"])
+        with make_proxy_server(self.rt, self.manager.port, self.model, listen_port=0) as proxy:
+            thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{proxy.server_port}/v1/models", timeout=10) as response:
+                    self.assertEqual([item["id"] for item in json.load(response)["data"]], [self.model])
+            finally:
+                proxy.shutdown()
+                thread.join()
+
     @unittest.skipUnless(find_spec("openai"), "OpenAI SDK is optional")
     def test_openai_sdk_stream_and_non_stream(self):
         from openai import OpenAI
@@ -292,6 +396,31 @@ class LlamaTests(FakeEnvTest):
             finally:
                 proxy.shutdown()
                 thread.join()
+
+
+class LlamaOptionTests(unittest.TestCase):
+    def test_optional_fields_are_gated_and_validated(self):
+        payload = {"messages": [{"role": "user", "content": "question"}]}
+        capabilities = dict.fromkeys(("enable_thinking", "presence_penalty", "repeat_penalty",
+                                      "response_format", "json_schema"), True)
+        for field, value in (
+                ("chat_template_kwargs", {"enable_thinking": 0}),
+                ("chat_template_kwargs", {"enable_thinking": True, "other": False}),
+                ("presence_penalty", float("nan")), ("presence_penalty", 2.1),
+                ("repeat_penalty", float("inf")), ("repeat_penalty", False), ("repeat_penalty", 0),
+                ("response_format", {"type": "json_object", "schema": {}}),
+                ("response_format", {"type": "json_schema", "json_schema": {"name": "ref",
+                   "schema": {"properties": {"item": {"$ref": "https://example.org/schema"}}}}})):
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                chat_args(dict(payload, **{field: value}), "model", capabilities)
+        for field, value in (
+                ("chat_template_kwargs", {"enable_thinking": False}),
+                ("presence_penalty", 0), ("repeat_penalty", 1),
+                ("response_format", {"type": "json_object"})):
+            request = dict(payload, **{field: value})
+            chat_args(request, "model", capabilities)
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "unsupported"):
+                chat_args(request, "model", {})
 
 
 class LlamaToolTests(FakeEnvTest):

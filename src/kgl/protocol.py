@@ -13,7 +13,8 @@ def server_health(backend, model, instance, status, error):
 
 LLAMA_FIELDS = {"model", "messages", "n", "stream", "stream_options", "max_tokens",
                 "max_completion_tokens", "temperature", "top_p", "top_k", "stop", "seed",
-                "tools", "tool_choice"}
+                "tools", "tool_choice", "chat_template_kwargs", "presence_penalty",
+                "repeat_penalty", "response_format"}
 
 MAX_REQUEST_BYTES = 512 * 1024
 
@@ -21,6 +22,55 @@ MAX_REQUEST_BYTES = 512 * 1024
 def gpu_ready(health):
     return any(str(device).startswith("cuda") for device in
                (health.get("devices") or [health.get("device")]))
+
+
+def _response_format(value, capabilities):
+    if not isinstance(value, dict):
+        raise ValueError("response_format must be an object")
+    if value == {"type": "json_object"}:
+        return
+    if value.get("type") != "json_schema" or not capabilities.get("json_schema"):
+        raise ValueError("unsupported response_format type")
+    wrapper = value.get("json_schema")
+    if (set(value) != {"type", "json_schema"} or not isinstance(wrapper, dict)
+            or set(wrapper) - {"name", "strict", "schema"}
+            or not isinstance(wrapper.get("name"), str) or not wrapper["name"].strip()
+            or type(wrapper.get("strict", False)) is not bool or not isinstance(wrapper.get("schema"), dict)):
+        raise ValueError("json_schema requires a name and a schema object, with optional boolean strict")
+    nested = [wrapper["schema"]]
+    while nested:
+        item = nested.pop()
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if key == "$ref" and (not isinstance(child, str) or not child.startswith("#/")):
+                    raise ValueError("json_schema references must be local JSON pointers")
+                nested.append(child)
+        elif isinstance(item, list):
+            nested.extend(item)
+
+
+def _llama_options(req, capabilities):
+    for field, capability in (("chat_template_kwargs", "enable_thinking"),
+                              ("response_format", "response_format"),
+                              ("presence_penalty", "presence_penalty"), ("repeat_penalty", "repeat_penalty")):
+        if field in req and not capabilities.get(capability):
+            raise ValueError(f"{field} is unsupported")
+    if "chat_template_kwargs" in req:
+        options = req["chat_template_kwargs"]
+        if (not isinstance(options, dict) or set(options) != {"enable_thinking"}
+                or type(options["enable_thinking"]) is not bool):
+            raise ValueError("chat_template_kwargs only supports boolean enable_thinking")
+    if "presence_penalty" in req:
+        value = req["presence_penalty"]
+        if type(value) not in (int, float) or not -2 <= value <= 2:
+            raise ValueError("presence_penalty must be between -2 and 2")
+    if "repeat_penalty" in req:
+        value = req["repeat_penalty"]
+        # llama.cpp stores this multiplier as a single-precision float.
+        if type(value) not in (int, float) or not 1e-38 <= value <= 3.4e38:
+            raise ValueError("repeat_penalty must be a positive finite float32 multiplier")
+    if "response_format" in req:
+        _response_format(req["response_format"], capabilities)
 
 
 def chat_args(req, model_id, capabilities=None):
@@ -32,6 +82,7 @@ def chat_args(req, model_id, capabilities=None):
         extra = set(req) - LLAMA_FIELDS
         if extra:
             raise ValueError(f"{min(extra)} is unsupported")
+    _llama_options(req, capabilities or {})
     for key in ("tools", "tool_choice", "functions", "function_call", "stop", "seed", "top_k"):
         capability = "tools" if key == "tool_choice" else key
         if req.get(key) is not None and not (capabilities or {}).get(capability):

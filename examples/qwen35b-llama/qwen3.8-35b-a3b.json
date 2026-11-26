@@ -16,8 +16,24 @@
     "IQ2_M": "9c095175f7af0c4acc18e552f0dd7ac8180d81f9ac4bf38d62a03c76a0d6e084",
     "Q5_K_M": "f1903bac4ee3eec1f9013735298867c96d97dfb55c71f826a714b17214abc4ad"
   },
-  "context": 4096,
-  "capabilities": {"reasoning": true, "top_k": true},
+  "alias": "qwen-local",
+  "inputs": {
+    "Q4_K_M": "/kaggle/input/models/thanhduy1022/qwen38-35b-a3b/gguf/q4-k-m/1/Qwen3.8-35B-A3B-Q4_K_M.gguf"
+  },
+  "build": {
+    "revision": "f4f6f2e7db76e98c95cc9b7fc608ea669c806044",
+    "dataset": "thanhduy1022/llama-cpp-f4f6f2e-sm75-214105c7/versions/1"
+  },
+  "context": 32768,
+  "capabilities": {
+    "reasoning": true,
+    "top_k": true,
+    "enable_thinking": true,
+    "presence_penalty": true,
+    "repeat_penalty": true,
+    "response_format": true,
+    "json_schema": true
+  },
   "defaults": {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "max_tokens": 4096, "timeout": 1800},
-  "verification": "Q4_K_M verified on two Tesla T4 GPUs with ctx 4096"
+  "verification": "Q4_K_M verified on two Tesla T4 GPUs with ctx 4096 and 32768"
 }

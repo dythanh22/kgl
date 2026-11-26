@@ -160,6 +160,7 @@ class LlamaBackend(BaseBackend):
 
     def health(self):
         return {"capabilities": self.settings.get("capabilities", {}), "defaults": self.settings.get("defaults", {}),
+                "alias": self.settings.get("alias"), "quant": self.settings.get("quant"),
                 "n_ctx": self.actual_context, "requested_context": self.context, "gpu_memory": self.gpu_memory,
                 "require_gpu": self.require_gpu,
                 "offloaded_layers": self.offloaded_layers, "last_timings": self.last_timings,

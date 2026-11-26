@@ -42,7 +42,7 @@ def start(a, rt, s, store):
     if not a.no_wait:
         health = h["health"]
         s.serve.state = "ready"
-        for key in ("capabilities", "defaults"):
+        for key in ("capabilities", "defaults", "alias", "quant"):
             if key in health:
                 setattr(s.serve, key, health[key])
         store.save(s, expected=s)

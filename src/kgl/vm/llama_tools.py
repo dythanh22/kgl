@@ -107,6 +107,48 @@ def _hash(path):
     return digest.hexdigest()
 
 
+def _input_digest_marker(path, info, expected_hash):
+    # Kaggle Input is versioned and mounted read-only. Treat every other path
+    # as mutable and verify its contents on each explicit launch.
+    resolved = path.resolve()
+    if (not resolved.is_relative_to("/kaggle/input")
+            or not os.statvfs(resolved).f_flag & os.ST_RDONLY):
+        return None
+    directory = Path(tempfile.gettempdir()) / f"kgl-gguf-digests-{os.getuid()}"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    metadata = directory.lstat()
+    if (not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o700
+            or metadata.st_uid != os.getuid()):
+        return None
+    identity = (str(resolved), info.st_dev, info.st_ino, info.st_size,
+                info.st_mtime_ns, info.st_ctime_ns, expected_hash)
+    return directory / hashlib.sha256(repr(identity).encode()).hexdigest()
+
+
+def verify_model(model, quant, expected_hash):
+    path = Path(model)
+    start = time.monotonic()
+    info = path.stat()
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError(f"GGUF is not a regular file for {quant}: {path}")
+    try:
+        marker = _input_digest_marker(path, info, expected_hash)
+    except OSError:
+        marker = None
+    cached = marker is not None and marker.is_file()
+    if not cached and _hash(path) != expected_hash:
+        raise ValueError(f"SHA-256 mismatch for {quant}: {path}")
+    after = path.stat()
+    if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (
+            info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns):
+        raise ValueError(f"GGUF changed during SHA-256 verification for {quant}: {path}")
+    if marker is not None and not cached:
+        marker.touch(mode=0o600, exist_ok=True)
+    elapsed = time.monotonic() - start
+    print(f"Verified {quant} SHA-256 in {elapsed:.2f}s" + (" (cached)" if cached else ""), flush=True)
+    return {"sha256": expected_hash, "elapsed_s": elapsed, "cached": cached}
+
+
 def fetch(repo, quant, directory, revision="main", filename=None, checksum_file="SHA256SUMS",
           token_file=None, input_root="/kaggle/input", expected_hash=None):
     if not re.fullmatch(r"[A-Za-z0-9_][\w.-]*/[A-Za-z0-9_][\w.-]*", repo) or not re.fullmatch(r"[\w.-]+", revision):

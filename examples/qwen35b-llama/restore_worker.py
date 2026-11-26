@@ -18,9 +18,9 @@ def verify(package, revision):
         raise RuntimeError(f"Cannot verify llama.cpp in {package}: {version}")
 
 
-def prepare(model, package, workdir):
+def prepare(model, package, workdir, dataset_id, quant):
     if not model.is_file():
-        raise FileNotFoundError(f"Attach the Q4_K_M model using Kaggle Add Input: {model}")
+        raise FileNotFoundError(f"Attach the {quant} model using Kaggle Add Input: {model}")
     cards = subprocess.check_output(
         ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], text=True
     ).splitlines()
@@ -31,9 +31,7 @@ def prepare(model, package, workdir):
     else:
         import kagglehub
 
-        dataset = kagglehub.dataset_download(
-            "thanhduy1022/llama-cpp-f4f6f2e-sm75-214105c7/versions/1"
-        )
+        dataset = kagglehub.dataset_download(dataset_id)
         package.parent.mkdir(parents=True, exist_ok=True)
         with TemporaryDirectory(dir=package.parent) as tmp:
             restored = Path(tmp) / package.name
@@ -41,7 +39,12 @@ def prepare(model, package, workdir):
             binary = restored / "llama"
             binary.chmod(binary.stat().st_mode | 0o100)
             verify(restored, package.name)
-            restored.rename(package)
+            try:
+                restored.rename(package)
+            except OSError:
+                if not package.is_dir():
+                    raise
+                verify(package, package.name)
 
     # Reproduce the recorded launch arguments so serve start can check the live
     # process identity and reject configuration conflicts before starting another.

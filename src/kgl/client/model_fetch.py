@@ -26,7 +26,7 @@ def read_preset(name):
         required = {"repo", "revision", "default_quant", "files", "checksum_file", "checksums"}
         if not isinstance(preset, dict) or required - preset.keys():
             raise ValueError("missing preset fields")
-        for key in ("files", "checksums", "capabilities", "defaults"):
+        for key in ("files", "checksums", "capabilities", "defaults", "inputs", "build"):
             if not isinstance(preset.get(key, {}), dict):
                 raise ValueError(f"{key} must be an object")
         if preset["default_quant"] not in preset["files"] or preset["files"].keys() - preset["checksums"].keys():
@@ -38,6 +38,23 @@ def read_preset(name):
             raise ValueError("invalid preset SHA-256")
         if type(preset.get("context", 4096)) is not int or preset.get("context", 4096) <= 0:
             raise ValueError("context must be a positive integer")
+        alias = preset.get("alias")
+        if alias is not None and (not isinstance(alias, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", alias)):
+            raise ValueError("invalid preset alias")
+        inputs = preset.get("inputs", {})
+        for quant, path in inputs.items():
+            if (quant not in preset["files"] or not isinstance(path, str)
+                    or not PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts
+                    or PurePosixPath(path).name != preset["files"][quant]):
+                raise ValueError(f"invalid preset input path for {quant}")
+        if len(set(inputs.values())) != len(inputs):
+            raise ValueError("duplicate preset input path")
+        if "build" in preset:
+            build = preset["build"]
+            for key, pattern in (("revision", r"[a-f0-9]{40}"),
+                                 ("dataset", r"[\w-]+/[\w-]+/versions/[1-9][0-9]*")):
+                if not isinstance(build.get(key), str) or not re.fullmatch(pattern, build[key]):
+                    raise ValueError(f"invalid preset build {key}")
         return preset
     except (OSError, ValueError, TypeError) as exc:
         raise ServeError(f"cannot load preset {name}: {exc}") from exc
