@@ -8,10 +8,11 @@ import {
   switchAssistantVariant,
   switchUserSibling,
 } from "./branches.js";
+import { estimateMessageTokens } from "./budget.js";
 import { displayAnswer } from "./markdown.js";
 import { mergeTabConversations, normalizeTags } from "./organize.js";
 import { createReadinessPoller } from "./poller.js";
-import { KEY_STORAGE, STORAGE_KEY, activeSampling, activeSources, chatTitle, state } from "./state.js";
+import { MASCOT_KEY, KEY_STORAGE, STORAGE_KEY, THEME_KEY, activeSampling, activeSources, chatTitle, state } from "./state.js";
 import { createDraftSaver, exportHistory, loadHistory, mergeBackup, saveHistory, snapshot, snapshotV1 } from "./storage.js";
 import { supportsActionItemsSchema } from "./tasks/action_items.js";
 import { renderActionItemsCard } from "./tasks/action_items_view.js";
@@ -24,15 +25,23 @@ import {
 import { initSourcesUI } from "./tasks/files_ui.js";
 import { initPromptLibrary } from "./tasks/prompts_ui.js";
 import { buildSamplingOverrides, defaultSampling } from "./tasks/sampling.js";
-import { estimateMessageTokens } from "./budget.js";
 import {
+  applyMascotVisibility,
+  applyRailState,
+  applySidebarState,
+  applyTheme,
   byId,
   currentChatRequest,
+  getMascotMood,
   historyNotice,
+  initMascot,
+  initRail,
   initTheme,
   isNearBottom,
   openEditForLastUser,
+  pulseMascotToken,
   renderBudget,
+  renderEnvironmentCard,
   renderHistory,
   renderSessionTime,
   renderStorageMetrics,
@@ -40,12 +49,18 @@ import {
   resizePrompt,
   scrollToReply,
   setBusy,
+  setMascotMood,
   setStatus,
   setTranscriptHandlers,
   showError,
+  showToast,
   syncSamplingUI,
+  syncSendEnabled,
   syncSystemUI,
   syncTaskModeUI,
+  syncThinkingUI,
+  updateGreeting,
+  updateScrim,
   updateSessionTime,
 } from "./ui.js";
 
@@ -61,29 +76,123 @@ const newChat = byId("new-chat");
 const thinkingField = byId("thinking");
 const keyField = byId("key");
 const exportModal = byId("export-md-modal");
+const settingsModal = byId("settings-modal");
+const exportJsonModal = byId("export-json-modal");
 
+initMascot();
 initTheme();
+initRail();
+updateGreeting();
+const narrowSidebar = window.matchMedia("(max-width: 820px)");
+const floatingRail = window.matchMedia("(max-width: 1160px)");
+applySidebarState(!narrowSidebar.matches);
+narrowSidebar.addEventListener("change", event => {
+  if (event.matches && state.sidebarOpen) {
+    const hadFocus = byId("conversations").contains(document.activeElement);
+    applySidebarState(false);
+    if (hadFocus) byId("sidebar-open").focus();
+  }
+});
+floatingRail.addEventListener("change", event => {
+  if (event.matches && state.railOpen) {
+    const hadFocus = byId("rail").contains(document.activeElement);
+    applyRailState(false, false);
+    if (hadFocus) byId("rail-toggle").focus();
+  }
+});
+
+// Popover positioning helper (anchors above/below trigger button)
+const POPOVERS = [
+  { menu: byId("chat-menu"), trigger: byId("thread-title-btn"), placement: "below-left" },
+  { menu: byId("plus-menu"), trigger: byId("plus-btn"), placement: "above-left" },
+  { menu: byId("sampling-pop"), trigger: byId("under-sampling-btn"), placement: "above-right" },
+];
+
+function closeAllPopovers() {
+  for (const { menu, trigger } of POPOVERS) {
+    if (menu && !menu.hidden) {
+      if (menu.contains(document.activeElement)) trigger?.focus();
+      menu.hidden = true;
+    }
+    if (trigger) trigger.setAttribute("aria-expanded", "false");
+  }
+}
+
+function togglePopover(menuEl, triggerEl, placement) {
+  const wasOpen = !menuEl.hidden;
+  closeAllPopovers();
+  if (wasOpen) return;
+  menuEl.hidden = false;
+  triggerEl.setAttribute("aria-expanded", "true");
+  const rect = triggerEl.getBoundingClientRect();
+  const mw = menuEl.offsetWidth;
+  const mh = menuEl.offsetHeight;
+  let left = rect.left;
+  let top = rect.bottom + 6;
+  if (placement === "above-left") {
+    left = rect.left;
+    top = rect.top - mh - 8;
+  } else if (placement === "above-right") {
+    left = rect.right - mw;
+    top = rect.top - mh - 8;
+  }
+  left = Math.max(10, Math.min(left, window.innerWidth - mw - 10));
+  top = Math.max(10, Math.min(top, window.innerHeight - mh - 10));
+  menuEl.style.left = `${left}px`;
+  menuEl.style.top = `${top}px`;
+}
+
+for (const { menu, trigger, placement } of POPOVERS) {
+  trigger?.addEventListener("click", event => {
+    event.stopPropagation();
+    if (state.running && trigger !== byId("thread-title-btn")) return;
+    togglePopover(menu, trigger, placement);
+  });
+}
+
+document.addEventListener("pointerdown", event => {
+  const insidePopover = POPOVERS.some(({ menu, trigger }) =>
+    menu?.contains(event.target) || trigger?.contains(event.target),
+  );
+  if (!insidePopover) closeAllPopovers();
+});
+
+// Idle -> sleepy mascot after 2 minutes of inactivity
+let lastActivity = performance.now();
+setInterval(() => {
+  if (!state.running && getMascotMood() === "idle" && performance.now() - lastActivity > 120000) {
+    setMascotMood("sleepy", "");
+  }
+}, 5000);
+for (const ev of ["pointermove", "keydown", "pointerdown", "wheel"]) {
+  window.addEventListener(ev, () => {
+    lastActivity = performance.now();
+    if (!state.running && getMascotMood() === "sleepy") {
+      setMascotMood(promptField.value.trim() ? "listening" : "idle", "");
+    }
+  }, { passive: true });
+}
 
 try {
   keyField.value = sessionStorage.getItem(KEY_STORAGE) || "";
 } catch {
-  // A key entered in this tab still works when browser storage is disabled.
+  // Tab-scoped key works even when sessionStorage is restricted.
 }
 keyField.addEventListener("input", () => {
   try {
     if (keyField.value) sessionStorage.setItem(KEY_STORAGE, keyField.value);
     else sessionStorage.removeItem(KEY_STORAGE);
-  } catch {
-    // Keep using the input value for this page.
-  }
+  } catch {}
 });
+byId("auth-check")?.addEventListener("click", () => check());
 
 function requestKey() {
   keyField.value = "";
   keyField.dispatchEvent(new Event("input"));
   byId("auth").hidden = false;
   state.canSend = false;
-  run.disabled = runVision.disabled = byId("retry").disabled = byId("continue").disabled = true;
+  syncSendEnabled();
+  runVision.disabled = byId("retry").disabled = byId("continue").disabled = true;
   keyField.focus();
 }
 
@@ -104,6 +213,7 @@ let chatBase = new Map(state.conversations.map(chat => [chat.id, JSON.stringify(
 promptField.value = state.active?.draft ?? (state.active ? "" : state.newDraft);
 syncSystemUI();
 syncSamplingUI();
+syncThinkingUI();
 
 function readSharedChats() {
   const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
@@ -120,7 +230,7 @@ function applySharedChats(conversations, activeId) {
     syncSelectedChat();
     renderTranscript();
   }
-  if (changed || previous !== state.active) renderHistory(selectChat);
+  if (changed || previous !== state.active) renderHistory(selectChat, deleteChatItem);
 }
 
 function reportChatConflicts(conflicts) {
@@ -159,13 +269,29 @@ function flushDraftAndPersist(data) {
   return persist(data);
 }
 
+function deleteChatItem(chat) {
+  if (!chat || state.running) return;
+  if (!window.confirm(`Xoá hội thoại "${chatTitle(chat)}" và bản nháp của nó?`)) return;
+  draftSaver.cancel();
+  const kept = state.conversations.filter(c => c !== chat);
+  const nextActiveId = state.active === chat ? null : state.active?.id;
+  if (!persist({ ...snapshot(state), conversations: kept, active: nextActiveId })) return;
+  if (state.active === chat) selectChat(null, false);
+  else renderHistory(selectChat, deleteChatItem);
+  showToast("Đã xoá hội thoại");
+}
+
 function selectChat(chat, shouldPersist = true) {
+  closeAllPopovers();
   draftSaver.flush();
   state.active = chat;
-  renderHistory(selectChat);
+  renderHistory(selectChat, deleteChatItem);
   renderTranscript();
   if (shouldPersist) persist();
   syncSelectedChat();
+  if (window.innerWidth <= 820) applySidebarState(false);
+  if (!chat) setMascotMood("wave", "", { settleMs: 2200 });
+  else setMascotMood(promptField.value.trim() ? "listening" : "idle", "");
   promptField.focus();
 }
 
@@ -173,6 +299,7 @@ function syncSelectedChat() {
   promptField.value = state.active?.draft ?? (state.active ? "" : state.newDraft);
   syncSystemUI();
   syncSamplingUI();
+  syncThinkingUI();
   sourcesUI?.renderSources();
   resizePrompt();
   renderBudget();
@@ -188,61 +315,63 @@ function importHistory(raw) {
   state.newSampling = data.newSampling || defaultSampling();
   state.newSources = data.newSources || [];
   selectChat(state.active, false);
-  historyNotice(`Imported ${addedCount} · skipped ${skippedCount} existing.`);
+  showToast(`Đã nhập ${addedCount} hội thoại (bỏ qua ${skippedCount} trùng ID)`);
 }
 
 function applyReadyHealth(health) {
   byId("auth").hidden = true;
+  state.health = health;
   state.vision = health.backend === "python";
   state.capabilities = health.capabilities || {};
   state.supportsThinking = !state.vision && health.backend === "llama" && health.capabilities?.enable_thinking === true;
   state.supportsJsonSchema = !state.vision && supportsActionItemsSchema(health);
   byId("thinking-field").hidden = !state.supportsThinking;
+  syncThinkingUI();
   syncTaskModeUI();
   syncSamplingUI();
-  byId("title").textContent = state.vision ? "Image classification" : "kgl workspace chat";
-  const model = byId("model");
-  const devices = health.devices?.join(", ") || health.device;
+
+  byId("title").textContent = state.vision ? "Image classifier" : "Kaggle Worker";
+  const modelEl = byId("model");
+  const shortModel = health.alias || health.model?.split("/").pop() || "model";
   const context = health.n_ctx || health.requested_context;
-  const contextLabel = context
-    ? context.toLocaleString() + " ctx" + (health.n_ctx ? "" : " req")
-    : "";
-  (state.vision ? document.querySelector(".brand-meta") : byId("environment-info")).prepend(model);
-  model.title = health.model || "";
   state.contextLimit = Number.isSafeInteger(context) && context > 1 ? context : undefined;
+
   const limit = byId("max-tokens");
   if (state.contextLimit) limit.max = state.contextLimit - 1;
   else {
     limit.removeAttribute("max");
     limit.placeholder = "";
   }
-  model.textContent = [health.model?.split("/").pop(), devices, contextLabel]
-    .filter(Boolean).join(" · ");
-  model.hidden = false;
-  byId("worker-memory").textContent = (health.gpu_memory || []).map(
-    sample => `GPU ${sample.gpu} · ${sample.memory_mib} MiB at load`
-  ).join(" · ");
+
+  modelEl.textContent = [shortModel, health.quant].filter(Boolean).join(" · ");
+  modelEl.title = health.model || "";
+  const underModel = byId("under-model-name");
+  if (underModel) underModel.textContent = shortModel;
+
   byId("chat").hidden = state.vision;
   byId("vision").hidden = !state.vision;
-  byId("sidebar-toggle").hidden = state.vision;
-  byId("conversations").hidden = state.vision || compactWorkspace.matches;
-  byId("generation").hidden = state.vision;
-  byId("thread-head").hidden = state.vision;
+  applySidebarState(!state.vision && state.sidebarOpen);
+  applyRailState(!state.vision && state.railOpen, false);
   if (state.vision) {
     byId("system-bar").hidden = true;
     emptyState.hidden = true;
     transcript.hidden = true;
+    byId("thread-title").textContent = "Image classification";
   }
-  byId("usage").hidden = state.vision;
-  byId("panel").hidden = false;
+
   state.canSend = true;
+  renderEnvironmentCard();
   if (!state.vision) {
-    renderHistory(selectChat);
+    renderHistory(selectChat, deleteChatItem);
     renderTranscript();
   }
   renderBudget();
-  setStatus("Ready", "ready");
-  run.disabled = runVision.disabled = byId("retry").disabled = byId("continue").disabled = false;
+  setStatus("Sẵn sàng", "ready");
+  if (!state.running) {
+    setMascotMood(state.active?.messages?.length ? "idle" : "wave", "", { settleMs: 2400 });
+  }
+  runVision.disabled = byId("retry").disabled = byId("continue").disabled = false;
+  syncSendEnabled();
 }
 
 const readinessPoller = createReadinessPoller({
@@ -250,19 +379,20 @@ const readinessPoller = createReadinessPoller({
     const response = await fetchReady(keyField.value);
     const data = await response.json();
     const health = data.health || data.last_health;
+    if (health) state.health = health;
     updateSessionTime(data.approx_session_remaining_s);
     if (response.status === 401) {
       requestKey();
-      return { kind: "terminal", message: "Enter your proxy API key, then check the connection." };
+      return { kind: "terminal", message: "Nhập khóa API của proxy rồi bấm Kết nối." };
     }
     if (data.state === "connection_lost") {
-      return { kind: "terminal", message: "Kaggle session unavailable. Reconnect kgl and check again." };
+      return { kind: "terminal", message: "Phiên Kaggle đã mất kết nối. Kết nối lại bằng kgl rồi thử lại." };
     }
     if (data.state === "wrong_instance") {
-      return { kind: "terminal", message: "Worker instance changed. Check kgl status and reconnect." };
+      return { kind: "terminal", message: "Worker đã thay đổi. Kiểm tra kgl status rồi kết nối lại." };
     }
     if (health?.status === "error") {
-      return { kind: "terminal", message: health.error + " See kgl serve logs." };
+      return { kind: "terminal", message: health.error + " Xem kgl serve logs." };
     }
     if (response.ok && data.state === "ready" && health) {
       return { kind: "ready", health };
@@ -274,55 +404,62 @@ const readinessPoller = createReadinessPoller({
   },
   onTerminal({ message, error }) {
     state.canSend = false;
-    run.disabled = runVision.disabled = byId("retry").disabled = byId("continue").disabled = true;
-    if (error) showError(error);
-    else setStatus(message || "Worker unavailable.", "error");
+    syncSendEnabled();
+    runVision.disabled = byId("retry").disabled = byId("continue").disabled = true;
+    if (error) showError(error, { reconnect: byId("auth").hidden });
+    else setStatus(message || "Worker chưa sẵn sàng.", "error", { reconnect: byId("auth").hidden });
   },
   onTick(remainingSec) {
-    setStatus(`Worker busy · tự kiểm tra lại (${remainingSec}s)…`, "busy");
+    setStatus(`Đang chờ worker · kiểm tra lại (${remainingSec}s)…`, "busy", { waiting: true });
   },
   onTimeout() {
-    setStatus("Worker vẫn đang bận sau 30s. Bấm Check connection để kiểm tra lại.", "error");
+    setStatus("Worker vẫn đang bận sau 30 giây.", "error", { reconnect: true });
   },
 });
 
 async function check() {
+  if (refresh.disabled || state.running) return;
   readinessPoller.stop();
   state.canSend = false;
-  run.disabled = runVision.disabled = byId("retry").disabled = byId("continue").disabled = refresh.disabled = true;
-  setStatus("Checking model…", "checking");
+  syncSendEnabled();
+  runVision.disabled = byId("retry").disabled = byId("continue").disabled = refresh.disabled = true;
+  setStatus("Đang kiểm tra kết nối…", "checking");
+  setMascotMood("thinking", "Đang kết nối…");
   try {
     const response = await fetchReady(keyField.value);
     const data = await response.json();
     const health = data.health || data.last_health;
+    if (health) {
+      state.health = health;
+      renderEnvironmentCard();
+    }
     updateSessionTime(data.approx_session_remaining_s);
     if (response.status === 401) {
       requestKey();
-      throw new Error("Enter your proxy API key, then check the connection.");
+      throw new Error("Nhập khóa API của proxy rồi bấm Kết nối.");
     }
     if (data.state === "busy") {
-      setStatus("Worker busy · đang tự kiểm tra lại…", "busy");
+      setStatus("Đang chờ worker rảnh…", "busy", { waiting: true });
       readinessPoller.start(parseRetryAfter(response) * 1000);
       return;
     }
-    if (health?.status === "error") throw new Error(health.error + " See kgl serve logs.");
-    if (data.state === "connection_lost") throw new Error("Kaggle session unavailable. Reconnect kgl and check again.");
-    if (data.state === "loading" || data.state === "starting") throw new Error("Loading model. Check again in a moment.");
-    if (data.state === "down") throw new Error("Worker unavailable. Check kgl serve status and kgl serve logs.");
+    if (health?.status === "error") throw new Error(health.error + " Xem kgl serve logs.");
+    if (data.state === "connection_lost") throw new Error("Phiên Kaggle đã mất kết nối. Kết nối lại bằng kgl rồi thử lại.");
+    if (data.state === "loading" || data.state === "starting") throw new Error("Model đang nạp. Hãy thử lại sau ít phút.");
+    if (data.state === "down") throw new Error("Worker chưa sẵn sàng. Hãy kiểm tra kgl serve status và kgl serve logs.");
     if (!response.ok) {
-      const detail = data.error?.message || "Worker identity or device does not match.";
-      throw new Error(detail + " Check kgl status and reconnect if the Kaggle session ended.");
+      const detail = data.error?.message || "Worker hoặc thiết bị khác với cấu hình dự kiến.";
+      throw new Error(detail + " Kiểm tra kgl status và kết nối lại nếu phiên Kaggle đã hết.");
     }
     applyReadyHealth(health);
   } catch (error) {
     if (error instanceof TypeError) updateSessionTime();
-    showError(error);
+    showError(error, { reconnect: byId("auth").hidden });
   } finally {
     refresh.disabled = false;
   }
 }
 
-// Coalesce SSE DOM paints via rAF + 60ms interval while preserving exact delta order.
 function createStreamPainter(renderFn, minIntervalMs = 60) {
   let dirty = false;
   let rafId = null;
@@ -353,18 +490,9 @@ function createStreamPainter(renderFn, minIntervalMs = 60) {
   }
 
   function flush() {
-    if (rafId !== null) {
-      cancelAnimationFrame(rafId);
-      rafId = null;
-    }
-    if (timerId !== null) {
-      clearTimeout(timerId);
-      timerId = null;
-    }
-    if (dirty) {
-      dirty = false;
-      renderFn();
-    }
+    if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+    if (timerId !== null) { clearTimeout(timerId); timerId = null; }
+    if (dirty) { dirty = false; renderFn(); }
   }
 
   return { schedule, flush };
@@ -372,6 +500,7 @@ function createStreamPainter(renderFn, minIntervalMs = 60) {
 
 async function send({ mode = "send", overridePrevious = null, priorVariants = null } = {}) {
   if (!state.canSend || state.running || refresh.disabled) return;
+  closeAllPopovers();
   draftSaver.flush();
   readinessPoller.stop();
 
@@ -389,6 +518,7 @@ async function send({ mode = "send", overridePrevious = null, priorVariants = nu
   const {
     messages, payload: chatPayload, payloadBytes, replyTokens, estimate, thinking, task, structured, sourceText, targetWords,
   } = currentChatRequest(mode, previous);
+
   if (!state.vision && replyTokens !== undefined
       && (!Number.isInteger(replyTokens) || replyTokens < 1 || (state.contextLimit && replyTokens >= state.contextLimit))) {
     showError(new Error("Choose a reply limit smaller than the context window."));
@@ -426,8 +556,8 @@ async function send({ mode = "send", overridePrevious = null, priorVariants = nu
       : chatPayload;
 
     const startTime = performance.now();
-    byId("stream-phase").textContent = "Waiting for worker…";
-    setStatus("Running inference…", "busy");
+    setStatus("Đang xử lý yêu cầu…", "busy");
+    setMascotMood(structured ? "tool" : "thinking", "Đang đọc yêu cầu…");
     const response = await postInference(state.vision, payload, keyField.value, state.controller.signal);
     if (!response.ok) {
       const { error } = await response.json();
@@ -440,15 +570,15 @@ async function send({ mode = "send", overridePrevious = null, priorVariants = nu
         pollDelayMs = parseRetryAfter(response) * 1000;
         state.canSend = false;
       }
-      const hint = response.status === 503 ? " Đang tự kiểm tra trạng thái worker…" : "";
-      throw new Error((error?.message || "Inference failed.") + hint);
+      if (response.status === 503) state.canSend = false;
+      throw new Error(error?.message || "Không thể nhận câu trả lời.");
     }
     if (state.vision) {
       const { predictions } = await response.json();
       output.textContent = predictions.map(item => item.label + " · " + (item.score * 100).toFixed(1) + "%").join("\n")
         || "No predictions returned.";
       byId("result").hidden = false;
-      setStatus("Ready", "ready");
+      setStatus("Sẵn sàng", "ready");
       return;
     }
 
@@ -506,21 +636,29 @@ async function send({ mode = "send", overridePrevious = null, priorVariants = nu
       state.active.messages = [...messages, message];
     }
 
-    renderHistory(selectChat);
+    renderHistory(selectChat, deleteChatItem);
     const reply = renderTranscript(message);
     persist();
 
     let reasoningDirty = false;
     let contentDirty = false;
+    let firstContentAt = 0;
+
     painter = createStreamPainter(() => {
       const nearBottom = isNearBottom();
       if (reasoningDirty) {
         reasoningDirty = false;
         reply.thoughts.parentElement.hidden = false;
         reply.thoughts.textContent = message.reasoning;
+        if (reply.thoughtSummary) {
+          reply.thoughtSummary.textContent = firstContentAt ? "Suy luận" : "Đang suy luận…";
+        }
       }
       if (contentDirty) {
         contentDirty = false;
+        if (reply.thoughtSummary && message.reasoning) {
+          reply.thoughtSummary.textContent = "Suy luận";
+        }
         if (message.task === "action_items") {
           reply.text.replaceChildren(renderActionItemsCard({
             raw: message.content,
@@ -542,13 +680,17 @@ async function send({ mode = "send", overridePrevious = null, priorVariants = nu
         message.usage = usage;
       },
       onReasoning(chunk) {
-        if (!message.reasoning) byId("stream-phase").textContent = "Thinking…";
         message.reasoning += chunk;
         reasoningDirty = true;
+        const elapsed = ((performance.now() - startTime) / 1000).toFixed(0);
+        setMascotMood("thinking", `Đang suy luận · ${elapsed}s`);
         painter.schedule();
       },
       onContent(chunk) {
-        if (byId("stream-phase").textContent !== "Writing…") byId("stream-phase").textContent = "Writing…";
+        const now = performance.now();
+        if (!firstContentAt) firstContentAt = now;
+        pulseMascotToken();
+        setMascotMood(structured ? "tool" : "talking", "Đang trả lời…");
         if (mode === "continue") {
           message.segments[segmentIndex] += chunk;
           message.content = message.segments.join("\n\n");
@@ -567,31 +709,35 @@ async function send({ mode = "send", overridePrevious = null, priorVariants = nu
 
     if (finishReason === "length") {
       message.partialReason = "length";
-      const detail = message.content.trim() ? "Reply reached the token limit." : "Token limit reached before an answer.";
-      const hint = thinking ? " Increase the limit or turn off Thinking before retrying."
-        : " Use Continue or adjust the limit before retrying.";
+      const detail = message.content.trim() ? "Câu trả lời đã chạm giới hạn token." : "Đã chạm giới hạn token trước khi có câu trả lời.";
+      const hint = thinking ? " Tăng giới hạn hoặc tắt suy luận rồi thử lại."
+        : " Chọn Viết tiếp hoặc chỉnh giới hạn rồi thử lại.";
       throw new Error(detail + hint);
     }
-    if (finishReason !== "stop") throw new Error("Reply is incomplete. Check the connection before retrying.");
+    if (finishReason !== "stop") throw new Error("Câu trả lời chưa hoàn tất. Kiểm tra kết nối trước khi thử lại.");
     if (!message.content.trim()) {
       message.partialReason = "empty";
-      throw new Error("The worker ended the turn without an answer. Retry the request.");
+      throw new Error("Worker kết thúc lượt mà chưa trả lời. Hãy thử lại.");
     }
     message.partial = false;
     delete message.partialReason;
-    setStatus("Ready", "ready");
+    setStatus("Sẵn sàng", "ready");
+    setMascotMood("happy", "", { settleMs: 2200 });
   } catch (error) {
     painter?.flush();
     if (state.controller?.signal.aborted) {
       if (message) message.partialReason = "stopped";
       state.canSend = false;
       shouldAutoPoll = true;
-      setStatus("Đã dừng cục bộ · đang tự kiểm tra khi worker rảnh…", "busy");
+      setStatus("Đã dừng cục bộ · đang tự kiểm tra khi worker rảnh…", "busy", { waiting: true });
+      setMascotMood("sorry", "Đã dừng · đang kiểm tra worker…");
+    } else if (shouldAutoPoll) {
+      setStatus("Đang chờ worker rảnh…", "busy", { waiting: true });
     } else {
-      showError(error);
+      if (error instanceof TypeError) state.canSend = false;
+      showError(error, { reconnect: !state.canSend && byId("auth").hidden });
     }
   } finally {
-    byId("stream-phase").textContent = "";
     state.controller = undefined;
     const keepScroll = !isNearBottom();
     const scrollTop = transcript.scrollTop;
@@ -623,7 +769,7 @@ setTranscriptHandlers({
     draftSaver.flush();
     state.active.messages = switchUserSibling(state.active.messages, index, targetIdx);
     persist();
-    renderHistory(selectChat);
+    renderHistory(selectChat, deleteChatItem);
     renderTranscript();
     renderBudget();
   },
@@ -643,7 +789,7 @@ setTranscriptHandlers({
   },
 });
 
-// Events
+// ======================== EVENTS ========================
 byId("form").addEventListener("submit", event => {
   event.preventDefault();
   send({ mode: "send" });
@@ -664,7 +810,18 @@ promptField.addEventListener("keydown", event => {
     }
   }
 });
-thinkingField.addEventListener("change", renderBudget);
+
+thinkingField.addEventListener("change", () => {
+  syncThinkingUI();
+  renderBudget();
+});
+byId("think-toggle")?.addEventListener("click", () => {
+  if (state.running || !state.supportsThinking) return;
+  thinkingField.value = thinkingField.value === "on" ? "off" : "on";
+  syncThinkingUI();
+  renderBudget();
+});
+
 byId("retry").addEventListener("click", () => send({ mode: "retry" }));
 byId("continue").addEventListener("click", () => send({ mode: "continue" }));
 byId("stop").addEventListener("click", () => {
@@ -688,32 +845,45 @@ byId("session-warn-dismiss").addEventListener("click", () => {
   byId("session-warn").hidden = true;
 });
 
-const compactWorkspace = window.matchMedia("(max-width: 52rem)");
-function showWorkerRail(open) {
-  byId("worker-rail").hidden = !open;
-  byId("rail-toggle").setAttribute("aria-expanded", String(open));
-}
-showWorkerRail(!compactWorkspace.matches);
-compactWorkspace.addEventListener("change", event => {
-  showWorkerRail(!event.matches);
-  byId("conversations").hidden = event.matches || byId("thread-head").hidden;
+// Sidebar & Rail toggles
+byId("sidebar-toggle").addEventListener("click", () => applySidebarState(!state.sidebarOpen));
+byId("sidebar-open")?.addEventListener("click", () => applySidebarState(true));
+byId("rail-toggle")?.addEventListener("click", () => applyRailState(!state.railOpen, true));
+byId("context-ring-btn")?.addEventListener("click", () => applyRailState(!state.railOpen, true));
+byId("under-model-btn")?.addEventListener("click", () => applyRailState(true, true));
+byId("under-sources-btn")?.addEventListener("click", () => {
+  if (activeSources().length) applyRailState(true, true);
+  else byId("attach-file-btn").click();
 });
-byId("rail-toggle").addEventListener("click", () => {
-  if (compactWorkspace.matches) byId("conversations").hidden = true;
-  showWorkerRail(byId("worker-rail").hidden);
+byId("scrim")?.addEventListener("click", () => {
+  if (window.innerWidth <= 820) applySidebarState(false);
+  if (window.innerWidth <= 1160) applyRailState(false, false);
 });
-document.querySelector(".thread-actions").addEventListener("click", event => {
-  if (event.target.closest("button")) document.querySelector(".thread-menu").open = false;
+
+// Sidebar Search drawer & Recents fold
+byId("search-toggle")?.addEventListener("click", () => {
+  state.searchOpen = !state.searchOpen;
+  byId("search-drawer").hidden = !state.searchOpen;
+  byId("search-toggle").setAttribute("aria-expanded", String(state.searchOpen));
+  if (state.searchOpen) byId("history-search").focus();
 });
-byId("sidebar-toggle").addEventListener("click", () => {
-  if (compactWorkspace.matches) showWorkerRail(false);
-  byId("conversations").hidden = !byId("conversations").hidden;
+byId("recents-toggle")?.addEventListener("click", () => {
+  state.recentsOpen = !state.recentsOpen;
+  byId("recents-toggle").setAttribute("aria-expanded", String(state.recentsOpen));
+  renderHistory(selectChat, deleteChatItem);
 });
+
+// System bar
 byId("toggle-system").addEventListener("click", () => {
+  closeAllPopovers();
   const bar = byId("system-bar");
   bar.hidden = !bar.hidden;
   byId("toggle-system").setAttribute("aria-expanded", String(!bar.hidden));
   if (!bar.hidden) systemField.focus();
+});
+byId("close-system-bar")?.addEventListener("click", () => {
+  byId("system-bar").hidden = true;
+  byId("toggle-system").setAttribute("aria-expanded", "false");
 });
 for (const chip of document.querySelectorAll(".chip[data-sys]")) {
   chip.addEventListener("click", () => {
@@ -754,6 +924,30 @@ byId("sampling-mode").addEventListener("change", event => {
     byId("toggle-sampling-adv").setAttribute("aria-expanded", "true");
   }
 });
+byId("sampling-pop")?.addEventListener("click", event => {
+  const btn = event.target.closest("[data-samp-mode]");
+  if (!btn || state.running) return;
+  const mode = btn.dataset.sampMode;
+  closeAllPopovers();
+  updateActiveSampling({ mode });
+  if (mode === "custom") {
+    applyRailState(true, true);
+    const genCard = byId("rail-gen-card");
+    if (genCard) genCard.open = true;
+    byId("sampling-advanced").hidden = false;
+    byId("toggle-sampling-adv").setAttribute("aria-expanded", "true");
+  }
+});
+byId("plus-menu")?.addEventListener("click", event => {
+  const taskBtn = event.target.closest("[data-pick-task]");
+  if (taskBtn) {
+    closeAllPopovers();
+    if (!state.running) setTaskMode(taskBtn.dataset.pickTask);
+    return;
+  }
+  if (event.target.closest("button")) closeAllPopovers();
+});
+
 byId("toggle-sampling-adv").addEventListener("click", () => {
   const panel = byId("sampling-advanced");
   panel.hidden = !panel.hidden;
@@ -797,6 +991,7 @@ const promptLib = initPromptLibrary({
   state,
   onPersist: () => flushDraftAndPersist(),
   onSetTaskMode: setTaskMode,
+  onOpen: closeAllPopovers,
   onDraftChanged: () => {
     if (state.active) state.active.draft = promptField.value;
     else state.newDraft = promptField.value;
@@ -814,7 +1009,84 @@ const sourcesUI = initSourcesUI({
 });
 sourcesUI.renderSources();
 
-// Handover / summarize into a new linked chat
+// Quick links inside Right Rail Sources card + composer chip removals
+byId("rail-add-file")?.addEventListener("click", () => byId("attach-file-btn").click());
+byId("rail-pin-note")?.addEventListener("click", () => byId("pin-note-btn").click());
+byId("composer-files")?.addEventListener("kgl:sources-changed", () => {
+  flushDraftAndPersist();
+  sourcesUI.renderSources();
+  renderBudget();
+});
+
+// ======================== SETTINGS 2-COLUMN MODAL ========================
+function openSettings(pane = "appearance") {
+  closeAllPopovers();
+  const urlEl = byId("api-base-url");
+  if (urlEl) urlEl.textContent = `${location.origin}/v1`;
+  selectSettingsPane(pane);
+  settingsModal.showModal();
+}
+function selectSettingsPane(pane) {
+  for (const btn of byId("settings-nav").querySelectorAll("[data-spage]")) {
+    btn.classList.toggle("on", btn.dataset.spage === pane);
+  }
+  for (const sec of settingsModal.querySelectorAll(".spane")) {
+    sec.hidden = sec.dataset.pane !== pane;
+  }
+}
+byId("open-settings")?.addEventListener("click", () => openSettings("appearance"));
+byId("settings-close")?.addEventListener("click", () => { settingsModal.close(); });
+settingsModal?.addEventListener("pointerdown", event => {
+  if (event.target === settingsModal) settingsModal.close();
+});
+byId("settings-nav")?.addEventListener("click", event => {
+  const btn = event.target.closest("[data-spage]");
+  if (btn) selectSettingsPane(btn.dataset.spage);
+});
+byId("theme-seg")?.addEventListener("click", event => {
+  const btn = event.target.closest("[data-theme-val]");
+  if (!btn) return;
+  applyTheme(btn.dataset.themeVal);
+  try { localStorage.setItem(THEME_KEY, btn.dataset.themeVal); } catch {}
+});
+byId("sw-mascot")?.addEventListener("click", () => {
+  state.mascotEnabled = !state.mascotEnabled;
+  applyMascotVisibility();
+  try { localStorage.setItem(MASCOT_KEY, String(state.mascotEnabled)); } catch {}
+});
+byId("settings-open-prompts")?.addEventListener("click", () => {
+  settingsModal.close();
+  byId("open-prompts").click();
+});
+byId("settings-open-system")?.addEventListener("click", () => {
+  settingsModal.close();
+  byId("system-bar").hidden = false;
+  byId("toggle-system").setAttribute("aria-expanded", "true");
+  systemField.focus();
+});
+byId("copy-api-url")?.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(byId("api-base-url").textContent);
+    showToast("Đã sao chép Base URL");
+  } catch {
+    showToast("Không thể sao chép tự động");
+  }
+});
+byId("settings-export-btn")?.addEventListener("click", () => {
+  settingsModal.close();
+  byId("export-chat").click();
+});
+byId("settings-import-btn")?.addEventListener("click", () => {
+  settingsModal.close();
+  byId("import-chat").click();
+});
+byId("settings-show-auth")?.addEventListener("click", () => {
+  settingsModal.close();
+  byId("auth").hidden = false;
+  keyField.focus();
+});
+
+// ======================== HANDOVER MODAL ========================
 const handoverModal = byId("handover-modal");
 const handoverTurns = byId("handover-turns");
 const handoverBudget = byId("handover-budget");
@@ -842,17 +1114,18 @@ function updateHandoverBudget() {
 }
 
 function openHandoverModal() {
+  closeAllPopovers();
   if (!state.active || state.running) return;
   handoverStatus.hidden = true;
   handoverDraft.value = "";
-  handoverModal.hidden = false;
+  handoverModal.showModal();
   updateHandoverBudget();
 }
 
 byId("handover-chat").addEventListener("click", openHandoverModal);
 byId("handover-hint").addEventListener("click", openHandoverModal);
 handoverTurns.addEventListener("change", updateHandoverBudget);
-byId("handover-cancel").addEventListener("click", () => { handoverModal.hidden = true; });
+byId("handover-cancel").addEventListener("click", () => { handoverModal.close(); });
 
 byId("handover-generate").addEventListener("click", async () => {
   if (!state.active || state.running || !state.canSend) return;
@@ -864,6 +1137,7 @@ byId("handover-generate").addEventListener("click", async () => {
   byId("handover-generate").disabled = true;
   handoverStatus.textContent = "Đang tạo bản bàn giao từ Qwen…";
   handoverStatus.hidden = false;
+  setMascotMood("tool", "Đang tạo bản bàn giao…");
   try {
     const response = await postInference(false, payload, keyField.value);
     if (!response.ok) {
@@ -878,8 +1152,10 @@ byId("handover-generate").addEventListener("click", async () => {
     handoverStatus.textContent = choice?.finish_reason === "length"
       ? "Cảnh báo: Bản bàn giao chạm giới hạn token. Hãy rà soát/bổ sung trước khi mở chat mới."
       : "Đã tạo xong. Hãy đọc, chỉnh sửa nếu cần rồi bấm 'Xác nhận mở chat mới'.";
+    setMascotMood("happy", "", { settleMs: 1800 });
   } catch (error) {
     handoverStatus.textContent = `Không thể tạo bản bàn giao (${error.message}). Hội thoại gốc vẫn được giữ nguyên.`;
+    setMascotMood("sorry", "", { settleMs: 2500 });
   } finally {
     updateHandoverBudget();
   }
@@ -900,6 +1176,8 @@ byId("handover-confirm").addEventListener("click", () => {
     id: crypto.randomUUID(),
     title: `Bàn giao · ${chatTitle(orig)}`,
     parentId: orig?.id,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     system: orig?.system,
     sampling: orig?.sampling ? { ...orig.sampling } : undefined,
     sources: pinnedCopies,
@@ -909,12 +1187,13 @@ byId("handover-confirm").addEventListener("click", () => {
     ],
   };
   state.conversations.unshift(nextChat);
-  handoverModal.hidden = true;
+  handoverModal.close();
   selectChat(nextChat, true);
-  historyNotice("Đã mở hội thoại mới từ bản bàn giao (hội thoại gốc vẫn được giữ nguyên).");
+  showToast("Đã mở hội thoại mới từ bản bàn giao");
 });
 
 byId("toggle-action-items").addEventListener("click", () => {
+  closeAllPopovers();
   if (state.running) return;
   setTaskMode(state.taskMode === "action_items" ? null : "action_items");
 });
@@ -940,34 +1219,42 @@ for (const starter of document.querySelectorAll(".starter[data-prompt]")) {
 
 // Export single thread as Markdown (.md)
 byId("export-md").addEventListener("click", () => {
+  closeAllPopovers();
   if (!state.active) return;
   const msgs = state.active.messages || [];
   const partialCount = msgs.filter(m => m.partial).length;
   byId("export-md-scope").textContent = `Hội thoại "${chatTitle(state.active)}" · ${msgs.length} tin nhắn trong nhánh hiện tại`
     + (partialCount ? ` (${partialCount} lượt dở).` : ".");
   byId("export-md-reasoning").checked = false;
-  exportModal.hidden = false;
+  exportModal.showModal();
   byId("export-md-confirm").focus();
 });
-byId("export-md-cancel").addEventListener("click", () => {
-  exportModal.hidden = true;
-});
+byId("export-md-cancel").addEventListener("click", () => { exportModal.close(); });
 byId("export-md-confirm").addEventListener("click", () => {
   if (!state.active) return;
   const includeReasoning = byId("export-md-reasoning").checked;
   const md = exportThreadMarkdown(state.active, { includeReasoning });
   downloadMarkdown(chatTitle(state.active), md);
-  exportModal.hidden = true;
+  exportModal.close();
+  showToast("Đã tải tệp .md");
 });
 
-// Global keyboard shortcuts (respect IME and menu priority)
+// Close prompt library backdrop on outside click
+byId("prompt-library")?.addEventListener("pointerdown", event => {
+  if (event.target === byId("prompt-library")) promptLib.closeLibrary();
+});
+
+// Global keyboard shortcuts
 document.addEventListener("keydown", event => {
-  if (event.isComposing) return;
+  if (event.isComposing || document.querySelector(".modal-backdrop[open]")) return;
   const mod = event.ctrlKey || event.metaKey;
   if (mod && event.key.toLowerCase() === "k") {
     event.preventDefault();
     if (!state.vision) {
-      byId("conversations").hidden = false;
+      applySidebarState(true);
+      state.searchOpen = true;
+      byId("search-drawer").hidden = false;
+      byId("search-toggle").setAttribute("aria-expanded", "true");
       byId("history-search").focus();
       byId("history-search").select();
     }
@@ -981,24 +1268,24 @@ document.addEventListener("keydown", event => {
     return;
   }
   if (event.key === "Escape") {
+    if (POPOVERS.some(({ menu }) => menu && !menu.hidden)) {
+      closeAllPopovers();
+      return;
+    }
     if (!byId("slash-menu").hidden) {
       promptLib.hideSlashMenu();
       return;
     }
-    if (!byId("prompt-library").hidden) {
-      promptLib.closeLibrary();
+    if (narrowSidebar.matches && state.sidebarOpen) {
+      applySidebarState(false);
+      byId("sidebar-open").focus();
+      event.preventDefault();
       return;
     }
-    if (!exportModal.hidden) {
-      exportModal.hidden = true;
-      return;
-    }
-    if (!handoverModal.hidden) {
-      handoverModal.hidden = true;
-      return;
-    }
-    if (!exportJsonModal.hidden) {
-      exportJsonModal.hidden = true;
+    if (floatingRail.matches && state.railOpen) {
+      applyRailState(false, false);
+      byId("rail-toggle").focus();
+      event.preventDefault();
       return;
     }
     if (state.running && !state.vision) {
@@ -1029,20 +1316,22 @@ byId("image").addEventListener("change", () => {
 });
 
 newChat.addEventListener("click", () => selectChat(null));
-byId("history-search").addEventListener("input", () => renderHistory(selectChat));
+byId("history-search").addEventListener("input", () => renderHistory(selectChat, deleteChatItem));
 byId("history-date-filter").addEventListener("change", event => {
   state.dateFilter = event.target.value;
-  renderHistory(selectChat);
+  renderHistory(selectChat, deleteChatItem);
 });
 byId("pin-chat").addEventListener("click", () => {
+  closeAllPopovers();
   if (!state.active || state.running) return;
   state.active.pinned = !state.active.pinned;
   state.active.updatedAt = new Date().toISOString();
-  renderHistory(selectChat);
+  renderHistory(selectChat, deleteChatItem);
   renderTranscript();
   flushDraftAndPersist();
 });
 byId("edit-tags").addEventListener("click", () => {
+  closeAllPopovers();
   if (!state.active || state.running) return;
   const current = (state.active.tags || []).join(", ");
   const entered = window.prompt("Nhập các tag, phân cách bằng dấu phẩy (vd: họp, báo-cáo, qwen):", current);
@@ -1051,39 +1340,39 @@ byId("edit-tags").addEventListener("click", () => {
   if (tags.length) state.active.tags = tags;
   else delete state.active.tags;
   state.active.updatedAt = new Date().toISOString();
-  renderHistory(selectChat);
+  renderHistory(selectChat, deleteChatItem);
   renderTranscript();
   flushDraftAndPersist();
 });
 byId("rename-chat").addEventListener("click", () => {
-  const title = window.prompt("Conversation name", chatTitle(state.active));
+  closeAllPopovers();
+  const title = window.prompt("Tên hội thoại", chatTitle(state.active));
   if (title === null || !title.trim()) return;
   state.active.title = title.trim();
   state.active.updatedAt = new Date().toISOString();
-  renderHistory(selectChat);
+  renderHistory(selectChat, deleteChatItem);
   renderTranscript();
   flushDraftAndPersist();
 });
 
-const exportJsonModal = byId("export-json-modal");
 byId("export-chat").addEventListener("click", () => {
   draftSaver.flush();
   byId("export-json-scope").textContent = `Hiện có ${state.conversations.length} hội thoại và ${state.customPrompts.length} mẫu prompt cá nhân.`;
-  exportJsonModal.hidden = false;
+  exportJsonModal.showModal();
 });
 byId("export-v2-btn").addEventListener("click", () => {
   exportHistory(snapshot(state), "kgl-conversations-v2.json");
-  exportJsonModal.hidden = true;
+  exportJsonModal.close();
+  showToast("Đã xuất backup v2");
 });
 byId("export-v1-btn").addEventListener("click", () => {
   exportHistory(snapshotV1(state), "kgl-conversations-v1.json");
-  exportJsonModal.hidden = true;
+  exportJsonModal.close();
+  showToast("Đã xuất backup v1");
 });
-byId("export-json-cancel").addEventListener("click", () => {
-  exportJsonModal.hidden = true;
-});
+byId("export-json-cancel").addEventListener("click", () => { exportJsonModal.close(); });
 
-// Two-tab synchronization & conflict detection on localStorage
+// Two-tab synchronization & conflict detection
 window.addEventListener("storage", event => {
   if (event.key !== STORAGE_KEY) return;
   try {
@@ -1093,10 +1382,9 @@ window.addEventListener("storage", event => {
     chatBase = nextBase;
     applySharedChats(merged, state.active?.id);
     reportChatConflicts(conflicts);
-  } catch {
-    // Ignore malformed external storage writes.
-  }
+  } catch {}
 });
+
 byId("import-chat").addEventListener("click", () => byId("import-file").click());
 byId("import-file").addEventListener("change", async event => {
   const file = event.target.files[0];
@@ -1111,13 +1399,10 @@ byId("import-file").addEventListener("change", async event => {
   }
 });
 byId("delete-chat").addEventListener("click", () => {
-  if (!state.active || !window.confirm("Delete this conversation and its draft?")) return;
-  draftSaver.cancel();
-  const kept = state.conversations.filter(chat => chat !== state.active);
-  if (!persist({ ...snapshot(state), conversations: kept, active: null })) return;
-  selectChat(null, false);
-  historyNotice("Conversation deleted.");
+  closeAllPopovers();
+  deleteChatItem(state.active);
 });
+
 byId("history-scope").addEventListener("change", renderBudget);
 byId("max-tokens").addEventListener("input", renderBudget);
 promptField.addEventListener("input", () => {
@@ -1126,15 +1411,17 @@ promptField.addEventListener("input", () => {
   resizePrompt();
   draftSaver.schedule();
   renderBudget();
+  if (!state.running) {
+    setMascotMood(promptField.value.trim() ? "listening" : "idle", "");
+  }
 });
 refresh.addEventListener("click", check);
+byId("reconnect").addEventListener("click", check);
+window.addEventListener("resize", () => updateScrim());
 
-if (state.conversations.length || state.newDraft) {
-  for (const id of ["conversations", "sidebar-toggle", "thread-head", "chat", "generation", "panel"]) {
-    byId(id).hidden = false;
-  }
-  renderHistory(selectChat);
-  renderTranscript();
-  resizePrompt();
-}
+// Initial paint
+renderHistory(selectChat, deleteChatItem);
+renderTranscript();
+renderEnvironmentCard();
+resizePrompt();
 check();

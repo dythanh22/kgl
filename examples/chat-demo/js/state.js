@@ -2,6 +2,8 @@ import { defaultSampling } from "./tasks/sampling.js";
 
 export const STORAGE_KEY = "kgl.demo.conversations.v1";
 export const THEME_KEY = "kgl.demo.theme";
+export const MASCOT_KEY = "kgl.demo.mascot";
+export const RAIL_KEY = "kgl.demo.rail";
 export const KEY_STORAGE = "kgl.demo.proxy-key";
 export const SCHEMA_VERSION = 1;
 
@@ -26,12 +28,18 @@ export const state = {
   controller: undefined,
   sessionDeadline: undefined,
   contextLimit: undefined,
+  health: null,
   capabilities: {},
   supportsThinking: false,
   supportsJsonSchema: false,
   taskMode: null,
   activeTagFilter: "",
   dateFilter: "all",
+  searchOpen: false,
+  recentsOpen: true,
+  railOpen: true,
+  mascotEnabled: true,
+  themeMode: "dark",
   taskOptions: {
     targetWords: "",
     audience: "general",
@@ -41,7 +49,7 @@ export const state = {
 };
 
 export function chatTitle(chat) {
-  return chat?.title || chat?.messages[0]?.content || "New conversation";
+  return chat?.title || chat?.messages[0]?.content || "Chat mới";
 }
 
 export function activeSampling() {

@@ -13,6 +13,7 @@ export function initPromptLibrary({
   onPersist,
   onSetTaskMode,
   onDraftChanged,
+  onOpen,
 }) {
   const byId = id => document.getElementById(id);
   const panel = byId("prompt-library");
@@ -103,7 +104,7 @@ export function initPromptLibrary({
 
     if (needsClipboard || (usesSelection && selection)) {
       pendingInsert = { item, slashRange, selection, clipboard: "" };
-      panel.hidden = false;
+      if (!panel.open) openLibrary();
       varBox.hidden = false;
       clipReadBtn.hidden = !needsClipboard;
       clipFallback.hidden = !needsClipboard;
@@ -116,6 +117,7 @@ export function initPromptLibrary({
         notes.push("Mẫu có {{clipboard}}. Bấm 'Đọc clipboard' hoặc dán thủ công bên dưới trước khi chèn.");
       }
       varInfo.textContent = notes.join(" · ");
+      (needsClipboard ? clipReadBtn : varApplyBtn).focus();
       return;
     }
 
@@ -231,12 +233,13 @@ export function initPromptLibrary({
 
   function openLibrary() {
     renderList();
-    panel.hidden = false;
+    onOpen();
+    panel.showModal();
     openBtn.setAttribute("aria-expanded", "true");
   }
 
   function closeLibrary() {
-    panel.hidden = true;
+    panel.close();
     varBox.hidden = true;
     pendingInsert = null;
     openBtn.setAttribute("aria-expanded", "false");
@@ -278,10 +281,14 @@ export function initPromptLibrary({
 
   openBtn.addEventListener("click", () => {
     if (state.running) return;
-    if (panel.hidden) openLibrary();
+    if (!panel.open) openLibrary();
     else closeLibrary();
   });
   closeBtn.addEventListener("click", closeLibrary);
+  panel.addEventListener("cancel", event => {
+    event.preventDefault();
+    closeLibrary();
+  });
   cancelEditBtn.addEventListener("click", resetForm);
 
   submitBtn.addEventListener("click", () => {

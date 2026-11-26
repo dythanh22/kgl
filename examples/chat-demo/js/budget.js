@@ -38,13 +38,27 @@ export function buildChatRequest({
     content: omitDeselectedSources(message.content, sources),
   });
 
-  function finalize({ messages, sent, task, structured, responseFormat, sourceText, targetWords, skippedDuplicates = [] }) {
+  function finalize({ messages, sent, task, structured, responseFormat, sourceText, targetWords, skippedDuplicates = [], includedSources = [] }) {
     const thinking = supportsThinking ? thinkingValue === "on" : undefined;
     const suggested = supportsThinking ? 2048 : 768;
     const defaultTokens = contextLimit && Math.min(suggested, contextLimit - 1);
     const replyTokens = limitValue ? limitNumber : defaultTokens;
     const estimate = 64 + sent.reduce((tokens, message) =>
       tokens + estimateMessageTokens(message.content), 0);
+    const systemTokens = trimmedSystem ? estimateMessageTokens(trimmedSystem) : 0;
+    const sourceTokens = includedSources.reduce((tokens, item) =>
+      tokens + estimateMessageTokens(item.block), 0);
+    const messageTokens = Math.max(0, estimate - systemTokens - sourceTokens);
+    const reservedReply = Number.isFinite(replyTokens) && replyTokens > 0 ? replyTokens : 0;
+    const breakdown = {
+      system: systemTokens,
+      sources: sourceTokens,
+      messages: messageTokens,
+      reply: reservedReply,
+      total: estimate + reservedReply,
+      contextLimit: contextLimit || 0,
+      free: contextLimit ? Math.max(0, contextLimit - (estimate + reservedReply)) : 0,
+    };
     const payload = {
       messages: sent.map(({ role, content }) => ({ role, content })),
       stream: true,
@@ -63,6 +77,7 @@ export function buildChatRequest({
       replyTokens,
       defaultTokens,
       estimate,
+      breakdown,
       thinking,
       task,
       structured,
@@ -173,5 +188,6 @@ export function buildChatRequest({
     sourceText,
     targetWords,
     skippedDuplicates,
+    includedSources: included,
   });
 }

@@ -13,6 +13,7 @@ import {
 } from "../js/organize.js";
 import { BACKUP_V1, BACKUP_V2, mergeBackup, readBackup, snapshot, snapshotV1 } from "../js/storage.js";
 import { defaultSampling } from "../js/tasks/sampling.js";
+import { formatMessageStats } from "../js/ui.js";
 
 test("organize: pinned chats float to top, tags normalize & filter, date ranges work", () => {
   const now = Date.parse("2026-11-25T12:00:00Z");
@@ -134,4 +135,57 @@ test("v2 import restores sources and sampling for an unsent draft", () => {
   const local = mergeBackup({ ...current, newSources: [{ ...source, id: "local" }], newSampling: { mode: "creative" } }, backup).data;
   assert.equal(local.newSources[0].id, "local");
   assert.equal(local.newSampling.mode, "creative");
+});
+
+test("budget: buildChatRequest returns accurate breakdown for context meter", async () => {
+  const { buildChatRequest } = await import("../js/budget.js");
+  const req = buildChatRequest({
+    prompt: "Tóm tắt nội dung này",
+    previous: [
+      { role: "user", content: "Lượt trước" },
+      { role: "assistant", content: "Trả lời trước" },
+    ],
+    systemText: "Trả lời ngắn gọn bằng tiếng Việt.",
+    sources: [
+      { id: "s1", name: "brief.md", content: "Dòng 1\nDòng 2\nDòng 3", fromLine: 1, toLine: 3, selected: true, pinned: true },
+    ],
+    contextLimit: 32768,
+    limitValue: "1024",
+    limitNumber: 1024,
+    supportsThinking: true,
+    thinkingValue: "off",
+    scope: "all",
+  });
+  assert.ok(req.breakdown);
+  assert.ok(req.breakdown.system > 0);
+  assert.ok(req.breakdown.sources > 0);
+  assert.ok(req.breakdown.messages > 0);
+  assert.equal(req.breakdown.reply, 1024);
+  assert.equal(req.breakdown.contextLimit, 32768);
+  assert.equal(req.breakdown.total, req.estimate + req.replyTokens);
+  assert.equal(req.breakdown.free, 32768 - req.breakdown.total);
+
+  const cont = buildChatRequest({
+    mode: "continue",
+    previous: [
+      { role: "user", content: "Viết báo cáo" },
+      { role: "assistant", content: "Phần 1...", partial: true, partialReason: "length" },
+    ],
+    contextLimit: 32768,
+    limitValue: "512",
+    limitNumber: 512,
+    supportsThinking: false,
+  });
+  assert.ok(cont.breakdown);
+  assert.equal(cont.breakdown.sources, 0);
+  assert.equal(cont.breakdown.reply, 512);
+});
+
+
+test("message stats show generation speed only for completed replies with worker timings", () => {
+  const message = { usage: { completion_tokens: 20 }, metrics: { totalMs: 2000 } };
+  assert.doesNotMatch(formatMessageStats(message), /tok\/s/);
+  message.metrics.workerTokPerSec = 12.5;
+  assert.match(formatMessageStats(message), /12\.5 tok\/s/);
+  assert.doesNotMatch(formatMessageStats({ ...message, partial: true }), /tok\/s/);
 });

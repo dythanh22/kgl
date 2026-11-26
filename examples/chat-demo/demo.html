@@ -1,44 +1,79 @@
 <!doctype html>
-<html lang="en">
+<html lang="vi">
+<head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
 <title>kgl workspace chat</title>
 <link rel="stylesheet" href="./styles/theme.css">
 <link rel="stylesheet" href="./styles/app.css">
-<header>
-  <div class="brand">
-    <button id="sidebar-toggle" class="btn-ghost btn-icon" type="button" title="Toggle sidebar" aria-label="Toggle conversations sidebar" hidden>&#9776;</button>
-    <div class="brand-meta">
-      <h1 id="title">kgl workspace chat</h1>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+    <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="m12 17 0 5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 24 24"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><circle cx="7" cy="7" r="1.2" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></symbol>
+    <symbol id="i-gpu" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="9" cy="12" r="2.5"/><path d="M15 10h3M15 14h3"/></symbol>
+    <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+    <symbol id="i-redo" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></symbol>
+    <symbol id="i-dl" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h8M16 6h4M4 12h4M12 12h8M4 18h10M18 18h2"/><circle cx="14" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="16" cy="18" r="2"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 9.2-9.2M17 6l3 3M14.5 8.5l2 2"/></symbol>
+    <symbol id="i-color" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+  </defs>
+</svg>
 
-      <p id="session-time" hidden></p>
+<div class="app-shell" id="app-shell">
+  <!-- ======================== LEFT SIDEBAR ======================== -->
+  <aside class="side" id="conversations" aria-label="Conversations">
+    <div class="side-chrome">
+      <button id="sidebar-toggle" class="ibtn" type="button" title="Ẩn / hiện thanh bên" aria-label="Ẩn hoặc hiện danh sách hội thoại">
+        <svg class="icon"><use href="#i-sidebar"/></svg>
+      </button>
+      <span class="sp"></span>
+      <button id="theme-toggle" class="ibtn" type="button" title="Đổi sáng / tối" aria-label="Đổi giao diện sáng hoặc tối">
+        <svg class="icon"><use href="#i-color"/></svg>
+      </button>
     </div>
-  </div>
-  <div class="connection">
-    <p id="status" role="status" data-state="checking">Checking model…</p>
-    <button id="refresh" class="btn-secondary" type="button">Check connection</button>
-    <button id="theme-toggle" class="btn-ghost btn-icon" type="button" title="Switch light/dark theme" aria-label="Switch light or dark theme">&#9790;</button>
-  </div>
-</header>
-<div id="auth" hidden>
-  <label for="key">Proxy API key</label>
-  <input id="key" type="password" autocomplete="off" placeholder="Enter bearer key…">
-</div>
-<div id="session-warn" class="session-warn" hidden role="alert">
-  <span id="session-warn-text">Phiên Kaggle ước tính còn dưới 15 phút. Hãy sao lưu lịch sử trước khi phiên kết thúc.</span>
-  <div class="session-warn-actions">
-    <button id="session-warn-export" class="btn-secondary" type="button">Export JSON</button>
-    <button id="session-warn-dismiss" class="btn-ghost" type="button">Đóng</button>
-  </div>
-</div>
-<main>
-  <div class="workspace">
-    <aside id="conversations" hidden aria-label="Conversations">
-      <div class="sidebar-top">
-        <h2>Conversations</h2>
+
+    <div class="side-nav">
+      <button id="new-chat" class="nav-row" type="button">
+        <svg class="icon"><use href="#i-plus"/></svg>
+        <span class="ell">Chat mới</span>
+        <kbd class="kbd">Ctrl ⇧ O</kbd>
+      </button>
+      <button id="search-toggle" class="nav-row" type="button" aria-expanded="false">
+        <svg class="icon"><use href="#i-search"/></svg>
+        <span class="ell">Search</span>
+        <kbd class="kbd">Ctrl K</kbd>
+      </button>
+    </div>
+
+    <div id="search-drawer" class="search-drawer" hidden>
+      <div class="search-box">
+        <svg class="icon faint"><use href="#i-search"/></svg>
+        <input id="history-search" type="search" aria-label="Tìm hội thoại" placeholder="Tìm tiêu đề, nội dung, nhánh, tag…">
       </div>
-      <button id="new-chat" type="button">+ New chat</button>
-      <input id="history-search" type="search" aria-label="Search conversations" placeholder="Search title, text, branches, tags…">
       <div class="history-filters">
         <select id="history-date-filter" aria-label="Filter conversations by date">
           <option value="all">Mọi ngày</option>
@@ -48,261 +83,615 @@
         </select>
       </div>
       <div id="tag-filter-bar" class="tag-filter-bar" hidden></div>
-      <div id="history"></div>
-      <div class="sidebar-footer">
-        <div class="history-actions">
-          <button id="export-chat" class="btn-secondary" type="button">Export</button>
-          <button id="import-chat" class="btn-secondary" type="button">Import</button>
+    </div>
+
+    <button id="recents-toggle" class="side-sect" type="button" aria-expanded="true">
+      <span>Gần đây</span>
+      <svg class="icon chev-sm"><use href="#i-down"/></svg>
+    </button>
+
+    <div id="history" class="chats-list"></div>
+
+    <p id="history-status" class="side-notice" role="status" hidden></p>
+
+    <div class="side-footer">
+      <button id="open-settings" class="me-btn" type="button" title="Cài đặt &amp; Sao lưu">
+        <canvas id="mascot-mini" class="mascot-mini" width="28" height="22" aria-hidden="true"></canvas>
+        <div class="me-meta">
+          <span class="me-title">
+            <span id="title">kgl workspace</span>
+            <span id="status-dot" class="lamp" data-state="checking" aria-hidden="true"></span>
+          </span>
+          <span id="model" class="me-sub">Đang kiểm tra kết nối…</span>
+        </div>
+        <svg class="icon faint"><use href="#i-gear"/></svg>
+      </button>
+    </div>
+  </aside>
+  <div id="scrim" class="scrim" hidden></div>
+
+  <!-- ======================== CENTER CHAT COLUMN ======================== -->
+  <main class="main panel" id="panel">
+    <header class="topbar" id="thread-head">
+      <button id="sidebar-open" class="ibtn" type="button" title="Mở thanh bên" aria-label="Mở danh sách hội thoại" hidden>
+        <svg class="icon"><use href="#i-sidebar"/></svg>
+      </button>
+      <div class="title-wrap">
+        <button id="thread-title-btn" class="title-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+          <span id="thread-title">Chat mới</span>
+          <svg class="icon chev-sm"><use href="#i-down"/></svg>
+        </button>
+      </div>
+      <span class="sp"></span>
+      <span id="session-time" class="top-pill" hidden></span>
+      <button id="rail-toggle" class="ibtn" type="button" title="Ẩn / hiện bảng thông số" aria-label="Ẩn hoặc hiện bảng thông số" aria-pressed="true">
+        <svg class="icon"><use href="#i-panel"/></svg>
+      </button>
+    </header>
+
+    <!-- Thread title context menu (replaces cluttered horizontal toolbar) -->
+    <div id="chat-menu" class="popover-menu" role="menu" hidden>
+      <button id="toggle-system" class="pop-item" type="button" role="menuitem" aria-expanded="false">
+        <svg class="icon"><use href="#i-sliders"/></svg>
+        <span class="w">Hướng dẫn hệ thống (System)</span>
+      </button>
+      <button id="toggle-action-items" class="pop-item" type="button" role="menuitem" aria-pressed="false">
+        <svg class="icon"><use href="#i-list"/></svg>
+        <span class="w">Rút đầu việc có bằng chứng</span>
+      </button>
+      <div class="pop-sep" id="chat-menu-active-sep" hidden></div>
+      <button id="pin-chat" class="pop-item" type="button" role="menuitem" hidden aria-pressed="false">
+        <svg class="icon"><use href="#i-pin"/></svg>
+        <span class="w">Ghim chat</span>
+      </button>
+      <button id="edit-tags" class="pop-item" type="button" role="menuitem" hidden>
+        <svg class="icon"><use href="#i-tag"/></svg>
+        <span class="w">Tags</span>
+      </button>
+      <button id="rename-chat" class="pop-item" type="button" role="menuitem" hidden>
+        <svg class="icon"><use href="#i-edit"/></svg>
+        <span class="w">Đổi tên hội thoại</span>
+      </button>
+      <button id="handover-chat" class="pop-item" type="button" role="menuitem" hidden>
+        <svg class="icon"><use href="#i-share"/></svg>
+        <span class="w">Tóm tắt bàn giao sang chat mới</span>
+      </button>
+      <button id="export-md" class="pop-item" type="button" role="menuitem" hidden>
+        <svg class="icon"><use href="#i-dl"/></svg>
+        <span class="w">Xuất Markdown (.md)</span>
+      </button>
+      <div class="pop-sep" id="chat-menu-danger-sep" hidden></div>
+      <button id="delete-chat" class="pop-item danger" type="button" role="menuitem" hidden>
+        <svg class="icon"><use href="#i-trash"/></svg>
+        <span class="w">Xoá hội thoại</span>
+      </button>
+    </div>
+
+    <div id="auth" class="banner banner-warn" hidden>
+      <svg class="icon"><use href="#i-key"/></svg>
+      <label for="key">Proxy API key</label>
+      <input id="key" type="password" autocomplete="off" placeholder="Nhập khóa API của proxy…">
+      <button id="auth-check" class="btn sm pri" type="button">Kết nối</button>
+    </div>
+
+    <div id="session-warn" class="banner banner-warn" hidden role="alert">
+      <span id="session-warn-text">Phiên Kaggle ước tính còn dưới 15 phút. Hãy sao lưu lịch sử trước khi phiên kết thúc.</span>
+      <div class="banner-actions">
+        <button id="session-warn-export" class="btn sm" type="button">Xuất JSON</button>
+        <button id="session-warn-dismiss" class="btn-ghost sm" type="button">Đóng</button>
+      </div>
+    </div>
+
+    <div id="system-bar" class="system-bar" hidden>
+      <div class="system-inner">
+        <div class="system-head">
+          <label for="system-prompt">Hướng dẫn hệ thống cho hội thoại này (gửi ở đầu mỗi lượt)</label>
+          <div class="preset-chips">
+            <button class="chip" type="button" data-sys="Reply concisely in Vietnamese with clear bullet points and direct answers.">Concise VI</button>
+            <button class="chip" type="button" data-sys="Act as a careful editor. Improve clarity, tone, and structure while keeping the original meaning.">Editor</button>
+            <button class="chip" type="button" data-sys="Extract facts and action items accurately. Do not invent information not present in the source text.">Strict extractor</button>
+            <button class="chip" type="button" data-sys="">Xoá</button>
+            <button id="close-system-bar" class="ibtn sm" type="button" aria-label="Đóng"><svg class="icon"><use href="#i-x"/></svg></button>
+          </div>
+        </div>
+        <textarea id="system-prompt" placeholder="Ví dụ: Trả lời ngắn gọn bằng tiếng Việt, nêu rõ quyết định và hạn chót…"></textarea>
+      </div>
+    </div>
+
+    <div class="transcript-wrap">
+      <div id="empty-state" class="empty-state" hidden>
+        <div class="empty-card">
+          <h2 id="greeting" class="greeting">Chào buổi chiều</h2>
+          <p class="empty-sub">Lịch sử và bản nháp được lưu cục bộ trên trình duyệt này. Chọn tác vụ nhanh hoặc nhập câu hỏi bên dưới.</p>
+          <div class="starters">
+            <button class="starter" type="button" data-task="summary">
+              <svg class="icon starter-ic"><use href="#i-spark"/></svg>
+              <strong>Tóm tắt có cấu trúc</strong>
+              <span>Tách rõ Quyết định, Đề xuất, Câu hỏi mở và đếm từ.</span>
+            </button>
+            <button class="starter" type="button" data-task="action_items">
+              <svg class="icon starter-ic"><use href="#i-list"/></svg>
+              <strong>Rút đầu việc có bằng chứng</strong>
+              <span>Bảng Việc · Người · Hạn · Câu nguồn, xuất CSV/TSV an toàn.</span>
+            </button>
+            <button class="starter" type="button" data-task="rewrite">
+              <svg class="icon starter-ic"><use href="#i-edit"/></svg>
+              <strong>Soạn &amp; biên tập văn bản</strong>
+              <span>Chọn đối tượng, giọng văn và đối chiếu tên/số/hạn.</span>
+            </button>
+            <button class="starter" type="button" data-prompt="So sánh các phương án sau, nêu ưu điểm, nhược điểm và rủi ro, rồi đề xuất bước tiếp theo:&#10;&#10;">
+              <svg class="icon starter-ic"><use href="#i-sliders"/></svg>
+              <strong>So sánh &amp; quyết định</strong>
+              <span>Cân nhắc ưu/nhược điểm, rủi ro và bước tiếp theo.</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <section id="transcript" class="transcript" aria-label="Hội thoại" hidden></section>
+      <button id="scroll-bottom" class="scroll-pill" type="button" hidden>&#8595; Mới nhất</button>
+    </div>
+
+    <!-- Image classifier fallback mode (preserves vision demo) -->
+    <section id="result" hidden aria-label="Predictions">
+      <h2>Predictions</h2>
+      <p id="output"></p>
+    </section>
+
+    <!-- ======================== BOTTOM DOCK ======================== -->
+    <form id="form" class="dock">
+      <div class="dock-inner">
+        <div id="connection-notice" class="connection-notice" hidden>
+          <p id="connection-message" role="status"></p>
+          <button id="reconnect" class="btn sm" type="button" hidden>Thử kết nối lại</button>
+        </div>
+        <div id="chat">
+          <div id="task-banner" class="task-banner" hidden>
+            <div class="task-banner-info">
+              <strong id="task-mode-title">Rút đầu việc có bằng chứng</strong>
+              <span id="task-mode-badge" class="badge-accent"></span>
+            </div>
+            <div id="summary-options" class="task-inline-opts" hidden>
+              <label for="summary-words">Giới hạn từ</label>
+              <input id="summary-words" type="number" min="20" step="10" placeholder="Tùy chọn">
+            </div>
+            <div id="rewrite-options" class="task-inline-opts" hidden>
+              <label for="rewrite-audience">Người đọc</label>
+              <select id="rewrite-audience">
+                <option value="general">Chung</option>
+                <option value="manager">Quản lý / Sếp</option>
+                <option value="team">Đồng nghiệp</option>
+                <option value="client">Khách hàng</option>
+              </select>
+              <label for="rewrite-goal">Mục đích</label>
+              <select id="rewrite-goal">
+                <option value="polish">Chỉnh rõ ý</option>
+                <option value="update">Báo cáo</option>
+                <option value="confirm">Xin xác nhận</option>
+                <option value="notice">Thông báo</option>
+              </select>
+              <label for="rewrite-tone">Giọng</label>
+              <select id="rewrite-tone">
+                <option value="clear">Trung lập</option>
+                <option value="polite">Lịch sự</option>
+                <option value="concise">Ngắn gọn</option>
+                <option value="formal">Trang trọng</option>
+              </select>
+            </div>
+            <button id="exit-task-mode" class="btn-ghost sm" type="button">Quay lại chat thường</button>
+          </div>
+
+          <!-- Pixel Cat perch above composer -->
+          <div class="mascot-perch" id="mascot-perch">
+            <canvas id="mascot-canvas" width="28" height="22" aria-hidden="true"></canvas>
+            <span id="mascot-status" class="mascot-status"></span>
+          </div>
+
+          <div class="composer-box" id="composer-box">
+            <div id="slash-menu" class="slash-menu" role="listbox" hidden></div>
+            <div id="composer-files" class="composer-files" hidden></div>
+            <div class="composer-row">
+              <button id="plus-btn" class="round-btn" type="button" title="Đính kèm tệp, nguồn, prompt hoặc tác vụ" aria-label="Thêm tệp hoặc công cụ" aria-haspopup="menu" aria-expanded="false">
+                <svg class="icon"><use href="#i-plus"/></svg>
+              </button>
+              <label for="prompt" class="sr-only">Tin nhắn</label>
+              <textarea id="prompt" rows="1" placeholder="Nhập tin nhắn… Gõ / để chọn mẫu"></textarea>
+              <div class="submit-slot">
+                <button id="stop" class="stop-btn" type="button" hidden title="Dừng sinh (Esc)" aria-label="Dừng trả lời">
+                  <span class="stop-square" aria-hidden="true"></span>
+                </button>
+                <button id="run" class="send-btn" type="submit" disabled title="Gửi (Enter)" aria-label="Gửi tin nhắn">
+                  <svg class="icon"><use href="#i-up"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Under bar (clean, borderless inline controls just like demo.gif) -->
+          <div class="composer-under" id="generation">
+            <button id="under-sources-btn" class="under-pk" type="button" title="Xem hoặc đính kèm tệp &amp; nguồn ghim">
+              <svg class="icon"><use href="#i-file"/></svg>
+              <span id="under-sources-label">Nguồn</span>
+            </button>
+            <button id="continue" class="under-action" type="button" hidden>Viết tiếp</button>
+            <button id="retry" class="under-action" type="button" hidden>Thử lại</button>
+            <span class="sp"></span>
+            <button id="under-model-btn" class="under-pk model-pk" type="button" title="Thông tin worker Kaggle">
+              <span id="under-model-name">qwen-local</span>
+            </button>
+            <button id="think-toggle" class="under-pk" type="button" hidden aria-pressed="false" title="Bật / tắt suy luận trước khi trả lời">
+              <svg class="icon bolt-ic"><use href="#i-bolt"/></svg>
+              <span id="think-toggle-label">Suy luận</span>
+            </button>
+            <button id="under-sampling-btn" class="under-pk mode-pk" type="button" aria-haspopup="menu" aria-expanded="false" title="Chế độ Sampling">
+              <span id="under-sampling-label">Theo preset</span>
+            </button>
+            <button id="context-ring-btn" class="ring-btn" type="button" title="Ngân sách Context &amp; Payload" aria-label="Ngân sách ngữ cảnh">
+              <canvas id="context-ring" width="16" height="16" aria-hidden="true"></canvas>
+            </button>
+          </div>
+
+          <input id="attach-file-input" type="file" multiple accept=".txt,.md,.csv,.json,.log,.py,.js,.ts,.yaml,.yml,.xml,.sql,.sh,.html,.css,text/*" hidden>
+          <p id="usage" class="under-usage" hidden></p>
+        </div>
+
+        <!-- Vision form -->
+        <div id="vision" class="vision-card" hidden>
+          <label for="image">Image (JPEG or PNG, up to 350 KiB)</label>
+          <input id="image" type="file" accept="image/jpeg,image/png">
+          <img id="vision-preview" alt="Selected image preview" hidden>
+          <div class="submit-group">
+            <button id="run-vision" class="btn pri" type="submit" disabled>Classify image</button>
+          </div>
+        </div>
+      </div>
+    </form>
+
+    <!-- Plus menu popover above [+] button -->
+    <div id="plus-menu" class="popover-menu" role="menu" hidden>
+      <button id="attach-file-btn" class="pop-item" type="button" role="menuitem">
+        <svg class="icon"><use href="#i-file"/></svg>
+        <span class="w">Đính kèm tệp văn bản…<small>.txt, .md, .csv, .json, .log, .py</small></span>
+      </button>
+      <button id="pin-note-btn" class="pop-item" type="button" role="menuitem">
+        <svg class="icon"><use href="#i-pin"/></svg>
+        <span class="w">Ghim đoạn nguồn / brief…<small>Dùng lại xuyên suốt các lượt</small></span>
+      </button>
+      <button id="open-prompts" class="pop-item" type="button" role="menuitem" aria-expanded="false">
+        <svg class="icon"><use href="#i-spark"/></svg>
+        <span class="w">Thư viện Prompt cá nhân<small>Gọi nhanh bằng phím /</small></span>
+      </button>
+      <div class="pop-sep"></div>
+      <div class="pop-head">Chế độ tác vụ có cấu trúc</div>
+      <button class="pop-item" type="button" role="menuitem" data-pick-task="action_items">
+        <svg class="icon"><use href="#i-list"/></svg>
+        <span class="w">Rút đầu việc có bằng chứng</span>
+      </button>
+      <button class="pop-item" type="button" role="menuitem" data-pick-task="summary">
+        <svg class="icon"><use href="#i-spark"/></svg>
+        <span class="w">Tóm tắt có cấu trúc</span>
+      </button>
+      <button class="pop-item" type="button" role="menuitem" data-pick-task="rewrite">
+        <svg class="icon"><use href="#i-edit"/></svg>
+        <span class="w">Soạn / sửa đối chiếu</span>
+      </button>
+    </div>
+
+    <!-- Sampling popover above mode chip -->
+    <div id="sampling-pop" class="popover-menu" role="menu" hidden>
+      <div class="pop-head">Chế độ Sampling</div>
+      <button class="pop-item" type="button" role="menuitemradio" data-samp-mode="preset">
+        <span class="w">Theo preset<small>Giữ mặc định worker (0.6 / 0.95 / 20)</small></span>
+        <span class="ck"></span>
+      </button>
+      <button class="pop-item" type="button" role="menuitemradio" data-samp-mode="precise">
+        <span class="w">Chính xác (0.2)<small>Ít dao động, hợp trích xuất &amp; kỹ thuật</small></span>
+        <span class="ck"></span>
+      </button>
+      <button class="pop-item" type="button" role="menuitemradio" data-samp-mode="creative">
+        <span class="w">Sáng tạo (0.85)<small>Đa dạng diễn đạt, gợi ý ý tưởng</small></span>
+        <span class="ck"></span>
+      </button>
+      <button class="pop-item" type="button" role="menuitemradio" data-samp-mode="custom">
+        <span class="w">Tùy chỉnh…<small>Mở thông số temperature, top_p, penalties</small></span>
+        <span class="ck"></span>
+      </button>
+    </div>
+  </main>
+
+  <!-- ======================== RIGHT SESSION RAIL ======================== -->
+  <aside class="rail" id="rail" aria-label="Thông tin phiên">
+    <!-- Card 1: Environment -->
+    <details class="rail-card" open>
+      <summary class="rail-head">
+        <span>Worker Kaggle</span>
+        <svg class="icon chev-sm"><use href="#i-down"/></svg>
+      </summary>
+      <div class="rail-body">
+        <div id="rail-env" class="kv-list"></div>
+        <div class="rail-status-row">
+          <p id="status" role="status" data-state="checking">Đang kiểm tra kết nối…</p>
+          <button id="refresh" class="btn sm" type="button">Kiểm tra kết nối</button>
+        </div>
+      </div>
+    </details>
+
+    <!-- Card 2: Context breakdown -->
+    <details class="rail-card" open id="budget-wrap">
+      <summary class="rail-head">
+        <span>Ngân sách ngữ cảnh</span>
+        <svg class="icon chev-sm"><use href="#i-down"/></svg>
+        <span class="sp"></span>
+        <span id="rail-ctx-folded" class="rail-folded"></span>
+      </summary>
+      <div class="rail-body">
+        <div class="ctx-top">
+          <strong id="ctx-pct">0% used</strong>
+          <span id="ctx-ratio" class="faint">0 / —</span>
+        </div>
+        <div class="ctx-meter" id="ctx-meter" aria-hidden="true">
+          <i class="seg-msg" id="seg-msg"></i>
+          <i class="seg-src" id="seg-src"></i>
+          <i class="seg-sys" id="seg-sys"></i>
+          <i class="seg-rep" id="seg-rep"></i>
+        </div>
+        <div class="budget-fill" id="budget-fill" hidden></div>
+        <div id="ctx-legend" class="kv-list"></div>
+        <div class="ctx-foot">
+          <span id="ctx-payload" class="faint">Payload 0 B / 512 KB</span>
+          <button id="handover-hint" class="btn sm" type="button" title="Tóm tắt sang hội thoại mới">Bàn giao</button>
+        </div>
+        <p id="context-budget" class="sr-only"></p>
+      </div>
+    </details>
+
+    <!-- Card 3: Sources & Pinned files -->
+    <details class="rail-card" open id="rail-sources-card">
+      <summary class="rail-head">
+        <span>Nguồn</span>
+        <svg class="icon chev-sm"><use href="#i-down"/></svg>
+        <span class="sp"></span>
+        <span id="rail-sources-count" class="rail-folded"></span>
+      </summary>
+      <div class="rail-body">
+        <p id="rail-sources-empty" class="faint small-note">Chưa có tệp hoặc nguồn ghim.</p>
+        <div id="sources-bar" class="sources-bar" hidden>
+          <span class="sources-privacy">Phần đã chọn sẽ gửi tới worker Kaggle</span>
+          <div id="sources-list" class="sources-list"></div>
+        </div>
+        <div class="rail-links">
+          <button id="rail-add-file" class="link-btn" type="button">+ Đính kèm tệp</button>
+          <button id="rail-pin-note" class="link-btn" type="button">+ Ghim nguồn</button>
+        </div>
+      </div>
+    </details>
+
+    <!-- Card 4: Generation & Sampling (folded by default like Scheduled/Skills in demo.gif) -->
+    <details class="rail-card" id="rail-gen-card">
+      <summary class="rail-head">
+        <span>Tạo câu trả lời</span>
+        <svg class="icon chev-sm"><use href="#i-down"/></svg>
+        <span class="sp"></span>
+        <span id="rail-gen-folded" class="rail-folded">Theo preset</span>
+      </summary>
+      <div class="rail-body rail-form">
+        <label class="rail-field">
+          <span>Send history</span>
+          <select id="history-scope">
+            <option value="all">All turns</option>
+            <option value="2">Last two turns</option>
+            <option value="0">Current message only</option>
+          </select>
+        </label>
+        <label class="rail-field" id="thinking-field" hidden>
+          <span>Thinking</span>
+          <select id="thinking">
+            <option value="off">Off</option>
+            <option value="on">On</option>
+          </select>
+        </label>
+        <label class="rail-field">
+          <span>Max generation tokens</span>
+          <input id="max-tokens" type="number" min="1" list="reply-limits" placeholder="768">
+          <datalist id="reply-limits">
+            <option value="2048">Giải thích dài</option>
+            <option value="4096">Báo cáo dài</option>
+          </datalist>
+        </label>
+        <label class="rail-field">
+          <span>Lấy mẫu</span>
+          <select id="sampling-mode">
+            <option value="preset">Theo preset</option>
+            <option value="precise">Chính xác (0.2)</option>
+            <option value="creative">Sáng tạo (0.85)</option>
+            <option value="custom">Tùy chỉnh</option>
+          </select>
+        </label>
+        <button id="toggle-sampling-adv" class="link-btn" type="button" aria-expanded="false">Thông số nâng cao…</button>
+        <div id="sampling-advanced" class="sampling-advanced" hidden>
+          <label class="rail-field">
+            <span>temperature</span>
+            <input id="samp-temp" type="number" min="0" max="2" step="0.05" placeholder="0.6">
+          </label>
+          <label class="rail-field">
+            <span>top_p</span>
+            <input id="samp-top-p" type="number" min="0.01" max="1" step="0.05" placeholder="0.95">
+          </label>
+          <label class="rail-field" id="samp-presence-wrap">
+            <span>presence_penalty</span>
+            <input id="samp-presence" type="number" min="-2" max="2" step="0.1" placeholder="0">
+          </label>
+          <label class="rail-field" id="samp-repeat-wrap">
+            <span>repeat_penalty</span>
+            <input id="samp-repeat" type="number" min="0.1" step="0.05" placeholder="1">
+          </label>
+          <button id="samp-reset" class="btn sm" type="button">Khôi phục mặc định</button>
+          <span id="sampling-effective" class="small-note faint"></span>
+        </div>
+      </div>
+    </details>
+
+    <!-- Card 5: Storage & Backup (folded by default) -->
+    <details class="rail-card" id="rail-storage-card">
+      <summary class="rail-head">
+        <span>Backup &amp; Tags</span>
+        <svg class="icon chev-sm"><use href="#i-down"/></svg>
+        <span class="sp"></span>
+        <span id="rail-storage-folded" class="rail-folded"></span>
+      </summary>
+      <div class="rail-body">
+        <p id="storage-metrics" class="small-note faint" hidden></p>
+        <div class="rail-actions-grid">
+          <button id="export-chat" class="btn sm" type="button">Xuất JSON</button>
+          <button id="import-chat" class="btn sm" type="button">Import JSON</button>
           <input id="import-file" type="file" accept=".json,application/json" hidden>
         </div>
-        <p id="storage-metrics" class="metrics" hidden></p>
-        <p id="history-status" role="status" hidden></p>
       </div>
-    </aside>
-    <div class="panel" id="panel" hidden>
-      <div class="thread-head" id="thread-head" hidden>
-        <h2 id="thread-title">New conversation</h2>
-        <button id="rail-toggle" type="button" class="btn-ghost" aria-controls="worker-rail" aria-expanded="true">Worker &amp; context</button>
-        <details class="thread-menu"><summary>Options</summary><div class="thread-actions">
-          <button id="toggle-action-items" class="btn-ghost" type="button" aria-pressed="false">Action items</button>
-          <button id="toggle-system" class="btn-ghost" type="button" aria-expanded="false">Instructions</button>
-          <button id="pin-chat" class="btn-ghost" type="button" hidden aria-pressed="false">Ghim chat</button>
-          <button id="edit-tags" class="btn-ghost" type="button" hidden>Tags</button>
-          <button id="handover-chat" class="btn-ghost" type="button" hidden>Bàn giao</button>
-          <button id="export-md" class="btn-ghost" type="button" hidden>Export .md</button>
-          <button id="rename-chat" class="btn-ghost" type="button" hidden>Rename</button>
-          <button id="delete-chat" class="btn-danger" type="button" hidden>Delete</button>
-        </div></details>
-      </div>
-      <div id="system-bar" hidden>
-        <div class="system-inner">
-          <div class="system-head">
-            <label for="system-prompt">System instructions (optional, sent at the start of each turn)</label>
-            <div class="preset-chips">
-              <button class="chip" type="button" data-sys="Reply concisely in Vietnamese with clear bullet points and direct answers.">Concise VI</button>
-              <button class="chip" type="button" data-sys="Act as a careful editor. Improve clarity, tone, and structure while keeping the original meaning.">Editor</button>
-              <button class="chip" type="button" data-sys="Extract facts and action items accurately. Do not invent information not present in the source text.">Strict extractor</button>
-              <button class="chip" type="button" data-sys="">Clear</button>
-            </div>
-          </div>
-          <textarea id="system-prompt" placeholder="Example: Reply concisely in Vietnamese, highlight key decisions and deadlines…"></textarea>
-        </div>
-      </div>
-      <div class="transcript-wrap">
-        <div id="empty-state" hidden>
-          <div class="empty-card">
-            <h3>What are we working on today?</h3>
-            <p>Your conversations and drafts stay saved locally in this browser. Pick a quick template or type below.</p>
-            <div class="starters">
-              <button class="starter" type="button" data-task="summary">
-                <strong>Summarize notes or documents</strong>
-                <span>Split Decisions, Proposals, and Open questions with word count.</span>
-              </button>
-              <button class="starter" type="button" data-task="action_items">
-                <strong>Extract action items</strong>
-                <span>Pull out tasks, owners, deadlines, and verbatim source quotes with CSV/TSV export.</span>
-              </button>
-              <button class="starter" type="button" data-task="rewrite">
-                <strong>Draft or polish writing</strong>
-                <span>Choose audience/tone, compare side-by-side, and check names/numbers/deadlines.</span>
-              </button>
-              <button class="starter" type="button" data-prompt="Compare the following options, list pros/cons and risks, and recommend the best next step:&#10;&#10;">
-                <strong>Compare &amp; decide</strong>
-                <span>Weigh trade-offs and spot missing details across options.</span>
-              </button>
-            </div>
-          </div>
-        </div>
-        <section id="transcript" aria-label="Conversation" hidden></section>
-        <button id="scroll-bottom" class="btn-secondary" type="button" hidden>&#8595; Latest</button>
-      </div>
-      <section id="result" hidden aria-label="Predictions">
-        <h2>Predictions</h2>
-        <p id="output"></p>
-      </section>
-      <form id="form">
-        <div class="composer-inner">
-          <div id="chat" hidden>
-            <div id="task-banner" class="task-banner" hidden>
-              <div class="task-banner-info">
-                <strong id="task-mode-title">Rút đầu việc có bằng chứng</strong>
-                <span id="task-mode-badge" class="badge-accent"></span>
-              </div>
-              <div id="summary-options" class="task-inline-opts" hidden>
-                <label for="summary-words">Giới hạn từ</label>
-                <input id="summary-words" type="number" min="20" step="10" placeholder="Tùy chọn">
-              </div>
-              <div id="rewrite-options" class="task-inline-opts" hidden>
-                <label for="rewrite-audience">Người đọc</label>
-                <select id="rewrite-audience">
-                  <option value="general">Chung</option>
-                  <option value="manager">Quản lý / Sếp</option>
-                  <option value="team">Đồng nghiệp</option>
-                  <option value="client">Khách hàng</option>
-                </select>
-                <label for="rewrite-goal">Mục đích</label>
-                <select id="rewrite-goal">
-                  <option value="polish">Chỉnh rõ ý</option>
-                  <option value="update">Báo cáo</option>
-                  <option value="confirm">Xin xác nhận</option>
-                  <option value="notice">Thông báo</option>
-                </select>
-                <label for="rewrite-tone">Giọng</label>
-                <select id="rewrite-tone">
-                  <option value="clear">Trung lập</option>
-                  <option value="polite">Lịch sự</option>
-                  <option value="concise">Ngắn gọn</option>
-                  <option value="formal">Trang trọng</option>
-                </select>
-              </div>
-              <button id="exit-task-mode" class="btn-ghost" type="button">Quay lại chat thường</button>
-            </div>
-            <div id="prompt-library" class="prompt-library" hidden>
-              <div class="pl-header">
-                <strong>Thư viện prompt cá nhân (gọi nhanh bằng phím <code>/</code>)</strong>
-                <button id="close-prompts" class="btn-ghost" type="button">Đóng</button>
-              </div>
-              <div id="pl-var-box" class="pl-var-box" hidden>
-                <p id="pl-var-info" class="pl-var-info"></p>
-                <div class="pl-var-actions">
-                  <button id="pl-read-clipboard" class="btn-secondary" type="button">Đọc clipboard</button>
-                  <button id="pl-var-apply" type="button">Chèn vào ô soạn</button>
-                  <button id="pl-var-cancel" class="btn-ghost" type="button">Hủy</button>
-                </div>
-                <textarea id="pl-clipboard-input" rows="2" placeholder="Nội dung clipboard (hoặc dán tay Ctrl+V)…"></textarea>
-              </div>
-              <div id="prompt-list" class="pl-list"></div>
-              <div id="prompt-form" class="pl-form" role="region" aria-label="Tạo hoặc sửa mẫu prompt">
-                <div class="pl-form-row">
-                  <input id="pl-slash" type="text" placeholder="/lenh (vd: /baocao)">
-                  <input id="pl-name" type="text" placeholder="Tên mẫu">
-                  <input id="pl-desc" type="text" placeholder="Mô tả ngắn (tùy chọn)">
-                </div>
-                <textarea id="pl-template" rows="2" placeholder="Nội dung mẫu… hỗ trợ {{date}}, {{selection}}, {{clipboard}}"></textarea>
-                <p id="pl-error" class="pl-error" hidden></p>
-                <div class="pl-form-actions">
-                  <button id="pl-submit" class="btn-secondary" type="button">Lưu mẫu mới</button>
-                  <button id="pl-cancel" class="btn-ghost" type="button" hidden>Hủy sửa</button>
-                </div>
-              </div>
-            </div>
-            <div id="sources-bar" class="sources-bar" hidden>
-              <div class="sources-head">
-                <strong>Tệp &amp; nguồn ghim</strong>
-                <span class="sources-privacy">Phần đang chọn sẽ được gửi tới worker Kaggle</span>
-              </div>
-              <div id="sources-list" class="sources-list"></div>
-            </div>
-            <div class="perch"><span class="pixel-ghost" aria-hidden="true"></span><span id="stream-phase" role="status"></span></div>
-            <div class="composer-box">
-              <div id="slash-menu" class="slash-menu" role="listbox" hidden></div>
-              <label for="prompt" class="sr-only">Message</label>
-              <textarea id="prompt" placeholder="Message the worker…"></textarea>
-              <div class="composer-bar">
-                <div class="composer-tools">
-                  <button id="open-prompts" class="btn-ghost" type="button" aria-expanded="false">/ Prompts</button>
-                  <button id="attach-file-btn" class="btn-ghost" type="button" title="Đính kèm tệp văn bản (.txt, .md, .csv, .json, .log, .py)">+ Tệp</button>
-                  <input id="attach-file-input" type="file" multiple accept=".txt,.md,.csv,.json,.log,.py,.js,.ts,.yaml,.yml,.xml,.sql,.sh,.html,.css,text/*" hidden>
-                  <button id="pin-note-btn" class="btn-ghost" type="button" title="Ghim đoạn văn bản làm nguồn cho các lượt sau">+ Ghim nguồn</button>
-                  <span class="shortcut-hint">Enter to send · Shift+Enter for new line</span>
-                </div>
-                <div class="submit-group">
-                  <button id="continue" class="btn-secondary" type="button" hidden>Continue</button>
-                  <button id="retry" class="btn-secondary" type="button" hidden>Retry reply</button>
-                  <button id="stop" class="btn-stop" type="button" aria-label="Stop" title="Stop" hidden>■</button>
-                  <button id="run" type="submit" aria-label="Send" title="Send" disabled>↑</button>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div id="vision" hidden>
-            <label for="image">Image (JPEG or PNG, up to 350 KiB)</label>
-            <input id="image" type="file" accept="image/jpeg,image/png">
-            <img id="vision-preview" alt="Selected image preview" hidden>
-            <div class="submit-group">
-              <button id="run-vision" type="submit" disabled>Classify image</button>
-            </div>
-          </div>
-          <span class="field-inline" id="thinking-field" hidden>
-                <label for="thinking">Thinking</label>
-                <select id="thinking">
-                  <option value="off">Off</option>
-                  <option value="on">On</option>
-                </select>
-              </span>
-        </div>
-      </form>
+    </details>
+  </aside>
+</div>
+
+<!-- ======================== PROMPT LIBRARY MODAL ======================== -->
+<dialog id="prompt-library" class="modal-backdrop" aria-label="Thư viện prompt cá nhân">
+  <div class="modal-card modal-wide">
+    <div class="pl-header">
+      <h3>Thư viện prompt cá nhân (gọi nhanh bằng phím <code>/</code>)</h3>
+      <button id="close-prompts" class="ibtn" type="button" aria-label="Đóng"><svg class="icon"><use href="#i-x"/></svg></button>
     </div>
-    <section id="worker-rail" aria-label="Worker and context">
-      <details open><summary>Environment</summary><div id="environment-info"><p id="model" hidden></p><p id="worker-memory" class="metrics"></p></div></details>
-      <details open><summary>Context</summary>
-          <div class="metrics-row">
-            <div class="budget-wrap" id="budget-wrap" hidden>
-              <div class="budget-bar" aria-hidden="true"><div class="budget-fill" id="budget-fill"></div></div>
-              <p id="context-budget" class="metrics"></p>
-              <button id="handover-hint" class="chip" type="button" hidden>Ngân sách gần đầy · Tóm tắt sang chat mới</button>
-            </div>
-            <p id="usage" class="metrics" hidden></p>
-          </div>
-      </details>
-      <details open><summary>Generation</summary>
-          <div class="actions">
-            <div id="generation" hidden>
-              <span class="field-inline">
-                <label for="history-scope">Send history</label>
-                <select id="history-scope">
-                  <option value="all">All turns</option>
-                  <option value="2">Last two turns</option>
-                  <option value="0">Current message only</option>
-                </select>
-              </span>
-
-              <span class="field-inline">
-                <label for="sampling-mode">Sampling</label>
-                <select id="sampling-mode">
-                  <option value="preset">Theo preset</option>
-                  <option value="precise">Chính xác (0.2)</option>
-                  <option value="creative">Sáng tạo (0.85)</option>
-                  <option value="custom">Tùy chỉnh</option>
-                </select>
-                <button id="toggle-sampling-adv" class="btn-ghost" type="button" aria-expanded="false">Nâng cao</button>
-              </span>
-              <span class="field-inline">
-                <label for="max-tokens">Max generation tokens</label>
-                <input form="form" id="max-tokens" type="number" min="1" list="reply-limits" placeholder="768">
-                <datalist id="reply-limits">
-                  <option value="2048">Giải thích dài</option>
-                  <option value="4096">Báo cáo dài</option>
-                </datalist>
-              </span>
-            </div>
-          </div>
-          <div id="sampling-advanced" class="sampling-advanced" hidden>
-            <span class="field-inline">
-              <label for="samp-temp">temperature</label>
-              <input form="form" id="samp-temp" type="number" min="0" max="2" step="0.05" placeholder="0.6">
-            </span>
-            <span class="field-inline">
-              <label for="samp-top-p">top_p</label>
-              <input form="form" id="samp-top-p" type="number" min="0.01" max="1" step="0.05" placeholder="0.95">
-            </span>
-            <span class="field-inline" id="samp-presence-wrap">
-              <label for="samp-presence">presence_penalty</label>
-              <input form="form" id="samp-presence" type="number" min="-2" max="2" step="0.1" placeholder="0">
-            </span>
-            <span class="field-inline" id="samp-repeat-wrap">
-              <label for="samp-repeat">repeat_penalty</label>
-              <input form="form" id="samp-repeat" type="number" min="0.1" step="0.05" placeholder="1">
-            </span>
-            <button id="samp-reset" class="btn-ghost" type="button">Khôi phục mặc định</button>
-            <span id="sampling-effective" class="metrics"></span>
-          </div>
-
-      </details>
-    </section>
+    <div id="pl-var-box" class="pl-var-box" hidden>
+      <p id="pl-var-info" class="pl-var-info"></p>
+      <div class="pl-var-actions">
+        <button id="pl-read-clipboard" class="btn sm" type="button">Đọc clipboard</button>
+        <button id="pl-var-apply" class="btn sm pri" type="button">Chèn vào ô soạn</button>
+        <button id="pl-var-cancel" class="btn-ghost sm" type="button">Hủy</button>
+      </div>
+      <textarea id="pl-clipboard-input" rows="2" placeholder="Nội dung clipboard (hoặc dán tay Ctrl+V)…"></textarea>
+    </div>
+    <div id="prompt-list" class="pl-list"></div>
+    <div id="prompt-form" class="pl-form" role="region" aria-label="Tạo hoặc sửa mẫu prompt">
+      <div class="pl-form-row">
+        <input id="pl-slash" type="text" placeholder="/lenh (vd: /baocao)">
+        <input id="pl-name" type="text" placeholder="Tên mẫu">
+        <input id="pl-desc" type="text" placeholder="Mô tả ngắn (tùy chọn)">
+      </div>
+      <textarea id="pl-template" rows="2" placeholder="Nội dung mẫu… hỗ trợ {{date}}, {{selection}}, {{clipboard}}"></textarea>
+      <p id="pl-error" class="pl-error" hidden></p>
+      <div class="pl-form-actions">
+        <button id="pl-submit" class="btn sm pri" type="button">Lưu mẫu mới</button>
+        <button id="pl-cancel" class="btn-ghost sm" type="button" hidden>Hủy sửa</button>
+      </div>
+    </div>
   </div>
-</main>
-<div id="export-md-modal" class="modal-backdrop" hidden role="dialog" aria-modal="true" aria-labelledby="export-md-title">
+</dialog>
+
+<!-- ======================== SETTINGS 2-COLUMN MODAL ======================== -->
+<dialog id="settings-modal" class="modal-backdrop" aria-labelledby="settings-title">
+  <div class="settings-sheet">
+    <nav class="snav" id="settings-nav" aria-label="Settings sections">
+      <div class="snav-title" id="settings-title">Cài đặt</div>
+      <button class="nav-row on" type="button" data-spage="appearance"><svg class="icon"><use href="#i-color"/></svg><span>Giao diện</span></button>
+      <button class="nav-row" type="button" data-spage="prompts"><svg class="icon"><use href="#i-spark"/></svg><span>Mẫu và hướng dẫn</span></button>
+      <button class="nav-row" type="button" data-spage="access"><svg class="icon"><use href="#i-key"/></svg><span>Sao lưu và API</span></button>
+      <button class="nav-row" type="button" data-spage="about"><svg class="icon"><use href="#i-info"/></svg><span>Giới thiệu</span></button>
+    </nav>
+    <div class="spage">
+      <button id="settings-close" class="ibtn spage-close" type="button" aria-label="Đóng cài đặt"><svg class="icon"><use href="#i-x"/></svg></button>
+
+      <section class="spane" data-pane="appearance">
+        <h2>Giao diện</h2>
+        <p class="sub">Tuỳ chỉnh giao diện Graphite / Fog và linh vật Mèo Pixel trên trình duyệt này.</p>
+        <div class="gcard">
+          <div class="srow">
+            <div class="w">
+              <b>Chủ đề màu (Theme)</b>
+              <span>Graphite tối mặc định, Fog sáng, hoặc theo hệ điều hành.</span>
+            </div>
+            <div class="seg" id="theme-seg">
+              <button type="button" data-theme-val="dark" aria-pressed="true">Graphite</button>
+              <button type="button" data-theme-val="light" aria-pressed="false">Fog</button>
+              <button type="button" data-theme-val="system" aria-pressed="false">System</button>
+            </div>
+          </div>
+          <div class="srow">
+            <div class="w">
+              <b>Linh vật Mèo Pixel</b>
+              <span>Hiển thị chú mèo phản ứng theo trạng thái suy luận ở mép trên hộp chat.</span>
+            </div>
+            <button id="sw-mascot" class="switch" type="button" role="switch" aria-checked="true" aria-label="Bật tắt Mèo Pixel"></button>
+          </div>
+        </div>
+      </section>
+
+      <section class="spane" data-pane="prompts" hidden>
+        <h2>Mẫu và hướng dẫn</h2>
+        <p class="sub">Quản lý thư viện lệnh <code>/</code> cá nhân và hướng dẫn hệ thống cho hội thoại hiện tại.</p>
+        <div class="gcard">
+          <div class="srow">
+            <div class="w">
+              <b>Thư viện Prompt cá nhân</b>
+              <span>Tạo, sửa, xoá các mẫu lệnh <code>/</code> hỗ trợ <code>{{date}}</code>, <code>{{selection}}</code>, <code>{{clipboard}}</code>.</span>
+            </div>
+            <button id="settings-open-prompts" class="btn sm" type="button">Mở thư viện</button>
+          </div>
+          <div class="srow">
+            <div class="w">
+              <b>System instructions cho chat hiện tại</b>
+              <span>Mở thanh chỉnh sửa System Prompt cùng các preset nhanh.</span>
+            </div>
+            <button id="settings-open-system" class="btn sm" type="button">Mở System bar</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="spane" data-pane="access" hidden>
+        <h2>Sao lưu và API</h2>
+        <p class="sub">Sao lưu lịch sử hội thoại trên trình duyệt và kết nối API OpenAI tương thích của proxy kgl.</p>
+        <div class="gcard">
+          <div class="srow">
+            <div class="w">
+              <b>OpenAI Base URL</b>
+              <span>Dùng trực tiếp cho curl, Python OpenAI SDK hoặc agent cục bộ.</span>
+            </div>
+            <div class="copy-box"><code id="api-base-url">http://127.0.0.1:8001/v1</code><button id="copy-api-url" class="btn sm" type="button">Copy</button></div>
+          </div>
+          <div class="srow">
+            <div class="w">
+              <b>Sao lưu &amp; Khôi phục (JSON)</b>
+              <span>Xuất bản đầy đủ (v2) hoặc tương thích (v1). Bearer key luôn nằm ngoài bản xuất.</span>
+            </div>
+            <div class="srow-btns">
+              <button id="settings-export-btn" class="btn sm" type="button">Export</button>
+              <button id="settings-import-btn" class="btn sm" type="button">Import</button>
+            </div>
+          </div>
+          <div class="srow">
+            <div class="w">
+              <b>Proxy Bearer Key</b>
+              <span>Chỉ cần thiết khi proxy chạy với <code>KGL_PROXY_KEY</code>. Lưu trong <code>sessionStorage</code> của tab.</span>
+            </div>
+            <button id="settings-show-auth" class="btn sm" type="button">Nhập key</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="spane" data-pane="about" hidden>
+        <h2>Giới thiệu</h2>
+        <p class="sub">Giao diện cục bộ cho kgl &amp; llama.cpp GGUF trên Kaggle GPU.</p>
+        <div class="about-head">
+          <canvas id="mascot-about" width="28" height="22" aria-hidden="true"></canvas>
+          <div>
+            <strong>kgl workspace chat</strong>
+            <p class="faint small-note">Zero-build ES modules · Pixel Cat 2D · Local browser storage</p>
+          </div>
+        </div>
+        <div class="gcard" id="about-info"></div>
+      </section>
+    </div>
+  </div>
+</dialog>
+
+<!-- ======================== EXISTING DIALOG MODALS ======================== -->
+<dialog id="export-md-modal" class="modal-backdrop" aria-labelledby="export-md-title">
   <div class="modal-card">
     <h3 id="export-md-title">Xuất hội thoại ra Markdown (.md)</h3>
     <p id="export-md-scope" class="modal-note"></p>
@@ -313,11 +702,12 @@
     </label>
     <div class="modal-actions">
       <button id="export-md-cancel" class="btn-ghost" type="button">Hủy</button>
-      <button id="export-md-confirm" type="button">Tải tệp .md</button>
+      <button id="export-md-confirm" class="btn pri" type="button">Tải tệp .md</button>
     </div>
   </div>
-</div>
-<div id="handover-modal" class="modal-backdrop" hidden role="dialog" aria-modal="true" aria-labelledby="handover-title">
+</dialog>
+
+<dialog id="handover-modal" class="modal-backdrop" aria-labelledby="handover-title">
   <div class="modal-card modal-wide">
     <h3 id="handover-title">Tóm tắt bàn giao sang chat mới</h3>
     <p class="modal-note">Tạo bản ghi chú bàn giao (dữ kiện hiện hành, quyết định, việc đang mở và nguồn ghim) để tiếp tục ở hội thoại mới nhẹ hơn. Hội thoại gốc luôn được giữ nguyên.</p>
@@ -329,31 +719,35 @@
         <option value="2">2 lượt gần nhất</option>
       </select>
       <span id="handover-budget" class="metrics"></span>
-      <button id="handover-generate" class="btn-secondary" type="button">Tạo bản bàn giao</button>
+      <button id="handover-generate" class="btn sm" type="button">Tạo bản bàn giao</button>
     </div>
     <p id="handover-status" class="modal-note" hidden></p>
     <textarea id="handover-draft" rows="10" placeholder="Bấm 'Tạo bản bàn giao' hoặc tự nhập ghi chú bàn giao tại đây…"></textarea>
     <div class="modal-actions">
       <button id="handover-cancel" class="btn-ghost" type="button">Hủy</button>
-      <button id="handover-confirm" type="button">Xác nhận mở chat mới</button>
+      <button id="handover-confirm" class="btn pri" type="button">Xác nhận mở chat mới</button>
     </div>
   </div>
-</div>
-<div id="export-json-modal" class="modal-backdrop" hidden role="dialog" aria-modal="true" aria-labelledby="export-json-title">
+</dialog>
+
+<dialog id="export-json-modal" class="modal-backdrop" aria-labelledby="export-json-title">
   <div class="modal-card">
     <h3 id="export-json-title">Sao lưu lịch sử (JSON)</h3>
     <p id="export-json-scope" class="modal-note"></p>
     <p class="modal-note">Bearer key trong <code>sessionStorage</code> luôn nằm ngoài mọi bản xuất.</p>
     <div class="export-choices">
-      <button id="export-v2-btn" type="button">Xuất bản đầy đủ (v2)</button>
+      <button id="export-v2-btn" class="btn pri" type="button">Xuất bản đầy đủ (v2)</button>
       <p class="modal-note">Giữ toàn bộ hội thoại, nhánh Edit/Regenerate, mẫu prompt cá nhân, sampling, nguồn ghim, tag và trạng thái ghim chat.</p>
-      <button id="export-v1-btn" class="btn-secondary" type="button">Xuất bản tương thích (v1)</button>
+      <button id="export-v1-btn" class="btn" type="button">Xuất bản tương thích (v1)</button>
       <p class="modal-note">Chỉ gồm nội dung hội thoại phẳng, tiêu đề, bản nháp và system instructions (tương thích bản cũ).</p>
     </div>
     <div class="modal-actions">
       <button id="export-json-cancel" class="btn-ghost" type="button">Đóng</button>
     </div>
   </div>
-</div>
+</dialog>
+
+<div id="toast" class="toast" hidden role="status"></div>
 <script type="module" src="./js/main.js"></script>
+</body>
 </html>
