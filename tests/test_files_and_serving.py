@@ -87,13 +87,14 @@ class ServeTests(FakeEnvTest):
 
     def test_local_openai_proxy(self):
         self.mgr.start("echo", "echo", wait=True, wait_timeout=30)
-        srv = make_proxy_server(self.rt, self.port, "echo", listen_port=0, api_key="k", static=Path(__file__).resolve().parents[1] / "examples/chat-demo")
+        assets = Path(__file__).resolve().parents[1] / "examples/chat-demo"
+        srv = make_proxy_server(self.rt, self.port, "echo", listen_port=0, api_key="k", static=assets)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         base = f"http://127.0.0.1:{srv.server_address[1]}"
         try:
             with urllib.request.urlopen(base + "/") as page:
                 self.assertEqual(page.headers.get_content_type(), "text/html")
-                self.assertIn(b"Checking model", page.read())
+                self.assertEqual(page.read(), (assets / "demo.html").read_bytes())
 
             def post(body, key="k", headers=None):
                 req = urllib.request.Request(base + "/v1/chat/completions", json.dumps(body).encode(),

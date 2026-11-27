@@ -26,6 +26,7 @@ import { initSourcesUI } from "./tasks/files_ui.js";
 import { initPromptLibrary } from "./tasks/prompts_ui.js";
 import { buildSamplingOverrides, defaultSampling } from "./tasks/sampling.js";
 import {
+  CONNECTION_MESSAGES,
   applyMascotVisibility,
   applyRailState,
   applySidebarState,
@@ -386,10 +387,10 @@ const readinessPoller = createReadinessPoller({
       return { kind: "terminal", message: "Nhập khóa API của proxy rồi bấm Kết nối." };
     }
     if (data.state === "connection_lost") {
-      return { kind: "terminal", message: "Phiên Kaggle đã mất kết nối. Kết nối lại bằng kgl rồi thử lại." };
+      return { kind: "terminal", message: CONNECTION_MESSAGES.connectionLost };
     }
     if (data.state === "wrong_instance") {
-      return { kind: "terminal", message: "Worker đã thay đổi. Kiểm tra kgl status rồi kết nối lại." };
+      return { kind: "terminal", message: CONNECTION_MESSAGES.wrongInstance };
     }
     if (health?.status === "error") {
       return { kind: "terminal", message: health.error + " Xem kgl serve logs." };
@@ -444,9 +445,9 @@ async function check() {
       return;
     }
     if (health?.status === "error") throw new Error(health.error + " Xem kgl serve logs.");
-    if (data.state === "connection_lost") throw new Error("Phiên Kaggle đã mất kết nối. Kết nối lại bằng kgl rồi thử lại.");
+    if (data.state === "connection_lost") throw new Error(CONNECTION_MESSAGES.connectionLost);
     if (data.state === "loading" || data.state === "starting") throw new Error("Model đang nạp. Hãy thử lại sau ít phút.");
-    if (data.state === "down") throw new Error("Worker chưa sẵn sàng. Hãy kiểm tra kgl serve status và kgl serve logs.");
+    if (data.state === "down") throw new Error(CONNECTION_MESSAGES.workerDown);
     if (!response.ok) {
       const detail = data.error?.message || "Worker hoặc thiết bị khác với cấu hình dự kiến.";
       throw new Error(detail + " Kiểm tra kgl status và kết nối lại nếu phiên Kaggle đã hết.");

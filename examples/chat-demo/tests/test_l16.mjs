@@ -13,7 +13,7 @@ import {
 } from "../js/organize.js";
 import { BACKUP_V1, BACKUP_V2, mergeBackup, readBackup, snapshot, snapshotV1 } from "../js/storage.js";
 import { defaultSampling } from "../js/tasks/sampling.js";
-import { formatMessageStats } from "../js/ui.js";
+import { CONNECTION_MESSAGES, formatConnectionError, formatMessageStats } from "../js/ui.js";
 
 test("organize: pinned chats float to top, tags normalize & filter, date ranges work", () => {
   const now = Date.parse("2026-11-25T12:00:00Z");
@@ -188,4 +188,10 @@ test("message stats show generation speed only for completed replies with worker
   message.metrics.workerTokPerSec = 12.5;
   assert.match(formatMessageStats(message), /12\.5 tok\/s/);
   assert.doesNotMatch(formatMessageStats({ ...message, partial: true }), /tok\/s/);
+});
+
+test("connection error guidance points operator to KGL Desktop and preserves OOM hints", () => {
+  assert.match(formatConnectionError(new TypeError("Failed to fetch")), /KGL Desktop/);
+  assert.match(CONNECTION_MESSAGES.connectionLost, /KGL Desktop.*Chạy Qwen/);
+  assert.match(formatConnectionError(new Error("CUDA out of memory")), /bộ nhớ GPU/);
 });

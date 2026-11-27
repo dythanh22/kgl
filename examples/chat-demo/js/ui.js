@@ -215,14 +215,25 @@ export function setStatus(text, stateName = "checking", { reconnect = false, wai
   }
 }
 
-export function showError(error, options) {
+export const CONNECTION_MESSAGES = {
+  proxyUnreachable: "Không kết nối được proxy cục bộ. Mở KGL Desktop bấm Chạy Qwen (hoặc kiểm tra terminal chạy proxy).",
+  connectionLost: "Phiên Kaggle đã mất kết nối. Mở KGL Desktop bấm Chạy Qwen (hoặc kết nối lại bằng kgl) rồi thử lại.",
+  wrongInstance: "Worker đã thay đổi. Mở KGL Desktop bấm Làm mới / Chạy Qwen (hoặc kiểm tra kgl status) rồi kết nối lại.",
+  workerDown: "Worker chưa sẵn sàng. Mở KGL Desktop bấm Chạy Qwen (hoặc kiểm tra kgl serve status và kgl serve logs).",
+};
+
+export function formatConnectionError(error) {
   const message = error instanceof TypeError
-    ? "Không kết nối được proxy cục bộ. Kiểm tra terminal đang chạy proxy."
+    ? CONNECTION_MESSAGES.proxyUnreachable
     : error.message;
   const hint = /cuda.*out of memory|outofmemoryerror/i.test(message)
     ? " Hãy thử model nhỏ hơn hoặc khởi động lại worker với thêm bộ nhớ GPU."
     : "";
-  setStatus(message + hint, "error", options);
+  return message + hint;
+}
+
+export function showError(error, options) {
+  setStatus(formatConnectionError(error), "error", options);
 }
 
 let sessionWarned15 = false;
