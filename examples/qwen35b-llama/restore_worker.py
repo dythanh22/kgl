@@ -18,7 +18,7 @@ def verify(package, revision):
         raise RuntimeError(f"Cannot verify llama.cpp in {package}: {version}")
 
 
-def prepare(model, package, workdir, dataset_id, quant):
+def check_input(model, quant):
     if not model.is_file():
         raise FileNotFoundError(f"Attach the {quant} model using Kaggle Add Input: {model}")
     cards = subprocess.check_output(
@@ -26,6 +26,14 @@ def prepare(model, package, workdir, dataset_id, quant):
     ).splitlines()
     if len(cards) != 2 or any("T4" not in card for card in cards):
         raise RuntimeError(f"Select GPU T4 x2 in Kaggle. Found: {cards}")
+
+
+def prepare(model, package, workdir, dataset_id, quant):
+    check_input(model, quant)
+    return restore(package, workdir, dataset_id)
+
+
+def restore(package, workdir, dataset_id):
     if package.exists():
         verify(package, package.name)
     else:

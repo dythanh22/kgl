@@ -77,7 +77,7 @@ class ServeManager:
             if not wait:
                 return r
             result = self.wait_ready(wait_timeout, say, r["instance"], backend, spec.model_id(model))
-        except (KglError, TimeoutError, KeyboardInterrupt):
+        except (KglError, OSError, KeyboardInterrupt):
             if r.get("started"):
                 try:
                     self.stop(r["instance"])

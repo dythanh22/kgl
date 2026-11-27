@@ -124,3 +124,22 @@ class QwenProxyTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "recovered"):
                 proxy.manage(Path("/new"), self.worker, previous)
             send.assert_not_called()
+
+    def test_stop_owned_verifies_birth_before_signalling(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(proxy, "listener", return_value=os.getpid()), \
+                patch.object(proxy, "check_owner"), patch.object(proxy.signal, "pidfd_send_signal") as send:
+            with self.assertRaisesRegex(RuntimeError, "identity"):
+                proxy.stop_owned(Path(tmp), os.getpid(), "different")
+            send.assert_not_called()
+            with patch.object(proxy.select, "poll") as poll:
+                poll.return_value.poll.return_value = [(1, proxy.select.POLLIN)]
+                proxy.stop_owned(Path(tmp), os.getpid(), proxy.process_birth(os.getpid()))
+            send.assert_called_once()
+
+    def test_launcher_only_replaces_its_recorded_proxy(self):
+        with patch.object(proxy, "listener", return_value=os.getpid()), patch.object(proxy, "check_owner"), \
+                patch.object(proxy, "probe", return_value=self.ready("old")), \
+                patch.object(proxy.signal, "pidfd_send_signal") as send:
+            with self.assertRaisesRegex(RuntimeError, "owns port"):
+                proxy.manage(Path.cwd(), self.worker, replace_only=(0, ""))
+            send.assert_not_called()

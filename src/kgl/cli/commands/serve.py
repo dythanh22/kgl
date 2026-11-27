@@ -15,6 +15,12 @@ from .models import provision_output
 
 @with_runtime
 def start(a, rt, s, store):
+    start_worker(a, rt, s, store)
+    print("model server ready" if not a.no_wait else "model server launching")
+    return EXIT_OK
+
+
+def start_worker(a, rt, s, store, *, recorded=None, progress=eprint, output=provision_output):
     mgr = ServeManager(rt, a.port)
     backend = a.backend or (DEFAULT_GGUF_BACKEND if a.preset or a.hf_repo else DEFAULT_BACKEND)
     spec = backend_spec(backend)
@@ -26,7 +32,7 @@ def start(a, rt, s, store):
     except ValueError as exc:
         raise ServeError(str(exc)) from exc
     if spec.passthrough:
-        model, resolved = prepare_llama(rt, a, s.llama_manifest, provision_output)
+        model, resolved = prepare_llama(rt, a, s.llama_manifest, output)
         options.update(resolved)
     elif any(value is not None for value in (a.preset, a.hf_repo, a.quant, a.hf_token_file)):
         raise ServeError("GGUF options require the llama backend")
@@ -35,9 +41,11 @@ def start(a, rt, s, store):
         s.serve = ServeRecord(port=a.port, model=spec.model_id(model), backend=backend,
                               instance=result["instance"], state="starting", **options.get("settings", {}))
         store.save(s, expected=s)
+        if recorded:
+            recorded(s, result)
 
     h = mgr.start(model, backend, a.dtype, wait=not a.no_wait,
-                  wait_timeout=a.wait_timeout, progress=eprint, require_gpu=a.require_gpu,
+                  wait_timeout=a.wait_timeout, progress=progress, require_gpu=a.require_gpu,
                   options=options, on_start=record_start)
     if not a.no_wait:
         health = h["health"]
@@ -46,8 +54,7 @@ def start(a, rt, s, store):
             if key in health:
                 setattr(s.serve, key, health[key])
         store.save(s, expected=s)
-    print("model server ready" if not a.no_wait else "model server launching")
-    return EXIT_OK
+    return h
 
 
 @with_runtime

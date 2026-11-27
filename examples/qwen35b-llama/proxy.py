@@ -91,13 +91,14 @@ def matches(result, worker):
             and (not worker.alias or (health.get("alias"), health.get("quant")) == (worker.alias, worker.quant)))
 
 
-def target_ready(worker):
-    raw = subprocess.check_output([sys.executable, "-m", "kgl", "serve", "status"], text=True)
+def target_ready(worker, *, env=None):
+    raw = subprocess.check_output([sys.executable, "-m", "kgl", "serve", "status"], text=True, env=env)
     if not matches((200, json.loads(raw)), worker):
         raise RuntimeError("Target worker is not ready. Run ready.py first.")
 
 
-def manage(home, worker, from_home=None):
+def manage(home, worker, from_home=None, *, replace_only=None, env=None):
+    extra = {"env": env} if env is not None else {}
     pid = listener()
     if pid is not None:
         fd = open_pidfd(pid)
@@ -107,6 +108,8 @@ def manage(home, worker, from_home=None):
             result = probe()
             if not handoff and matches(result, worker):
                 return "reused", pid
+            if replace_only is not None and (pid, process_birth(pid)) != replace_only:
+                raise RuntimeError("Another proxy owns port 8001")
             data = result[1]
             if data.get("state") == "busy":
                 raise RuntimeError("Proxy worker busy. Retry after the active request.")
@@ -114,7 +117,7 @@ def manage(home, worker, from_home=None):
                 raise RuntimeError("Previous session proxy is still serving or has not lost its connection")
             if data.get("state") != "wrong_instance" and data.get("health", {}).get("instance") == worker.instance:
                 raise RuntimeError("Expected worker is not ready. Retry after checking ready.py.")
-            target_ready(worker)
+            target_ready(worker, **extra)
             if handoff:
                 status, data = probe()
                 if (status, data.get("state")) != (503, "connection_lost"):
@@ -129,12 +132,12 @@ def manage(home, worker, from_home=None):
         finally:
             os.close(fd)
     else:
-        target_ready(worker)
+        target_ready(worker, **extra)
 
     with (home / "qwen-proxy.log").open("ab") as log:
         child = subprocess.Popen([sys.executable, "-m", "kgl", "serve", "proxy",
                                   "--static", str(STATIC)], stdin=subprocess.DEVNULL,
-                                 stdout=log, stderr=log, start_new_session=True)
+                                 stdout=log, stderr=log, start_new_session=True, **extra)
     try:
         for _ in range(50):
             if child.poll() is not None:
@@ -150,6 +153,33 @@ def manage(home, worker, from_home=None):
             child.terminate()
             child.wait(timeout=5)
         raise
+
+
+def process_birth(pid):
+    fields = (Path("/proc") / str(pid) / "stat").read_text().rsplit(")", 1)[1].split()
+    return fields[19]
+
+
+def stop_owned(home, pid, birth):
+    with (home / "qwen-proxy.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        current = listener()
+        if current is None or not pid:
+            return
+        if current != pid:
+            raise RuntimeError("Proxy listener changed")
+        fd = open_pidfd(pid)
+        try:
+            check_owner(pid, home)
+            if process_birth(pid) != birth or listener() != pid:
+                raise RuntimeError("Proxy identity changed")
+            signal.pidfd_send_signal(fd, signal.SIGTERM)
+            poll = select.poll()
+            poll.register(fd, select.POLLIN)
+            if not poll.poll(5000):
+                raise RuntimeError("Proxy exit not confirmed")
+        finally:
+            os.close(fd)
 
 
 def main():
