@@ -59,3 +59,26 @@ Dùng `--ctx 65536` khi cần cửa sổ lớn hơn, hoặc `--ctx 4096` để t
 Chờ lượt đang chạy kết thúc. Dùng `python -m kgl serve stop` để dừng worker và giữ kết nối notebook. Khi kết thúc cả phiên, dùng `python -m kgl stop` để xóa kết nối local, rồi dừng notebook trong giao diện Kaggle và xác nhận đã dừng. Proxy foreground thoát bằng Ctrl-C. Proxy nền có thể giữ origin cho lần kết nối sau và được quản lý bằng `proxy.py` khi phiên mới đã ready.
 
 [Kết quả khởi động, khôi phục và benchmark](../../docs/reports/2026-11-25-qwen-l9-l10.md)
+
+## Launcher desktop trên Linux
+
+Cài thêm extra `desktop` trong môi trường Python ≥ 3.11 (`pip install -e '.[desktop]'`) và cấu hình `~/.kaggle/kaggle.json` (hoặc `KAGGLE_API_TOKEN`) để dùng chế độ tự động không cần mở trình duyệt vào Kaggle. Từ checkout, mở cửa sổ bằng `python examples/qwen35b-llama/desktop.py`:
+
+- **Chế độ tự động (1 chạm):** Dán đường dẫn notebook (ví dụ `https://www.kaggle.com/code/owner/slug/`) hoặc `owner/slug` vào ô Notebook rồi bấm **Chạy Qwen**. Launcher tự lưu lại tên notebook cho các lần mở sau, gọi `CreateKernelSession` trên Kaggle, kết nối Jupyter, kiểm tra GGUF và hai T4, khôi phục build, nạp worker và bật nút **Mở chat**. Khi làm việc xong, bấm **Kết thúc GPU** để hủy phiên GPU trên Kaggle và dừng proxy local.
+- **Chế độ gắn URL thủ công:** Bật notebook trên Kaggle, bấm **Gắn URL và chạy** rồi dán VS Code Compatible URL. Dùng **Ngắt kết nối** để xóa kết nối local của phiên gắn vào.
+- Trên phiên đang chạy, **Dừng worker** tắt tiến trình Qwen mà vẫn giữ VM; **Chạy Qwen** dùng lại hoặc khởi động lại worker. Cửa sổ có thể đóng sau khi `Sẵn sàng`.
+
+CLI dùng cùng bộ điều phối. Các lệnh sau chạy từ thư mục gốc checkout:
+
+```bash
+python examples/qwen35b-llama/launch.py install-desktop
+python examples/qwen35b-llama/launch.py start --notebook https://www.kaggle.com/code/owner/slug/
+python examples/qwen35b-llama/launch.py status --refresh
+python examples/qwen35b-llama/launch.py stop-worker
+python examples/qwen35b-llama/launch.py start
+python examples/qwen35b-llama/launch.py end-session
+```
+
+`install-desktop` tạo biểu tượng `KGL Desktop` trong `~/.local/share/applications/kgl-desktop.desktop` (gỡ bằng `uninstall-desktop`). Launcher lưu cấu hình, danh sách notebook gần đây và trạng thái trong thư mục con `desktop` của `KGL_HOME` (`config.json`, `launcher.json`, `session.json`). Sau lần chạy đầu, `launch.py start` tự dùng lại notebook đã lưu. Với môi trường chưa cài `kagglesdk`, chế độ `attach` / `detach` vẫn hoạt động độc lập.
+
+**M0 live đã xác minh, 27/11/2026.** Với `kagglesdk==0.1.38` và `~/.kaggle/kaggle.json`, `GetKernel` trả metadata (`machine_shape="NvidiaTeslaT4"`, `enable_internet`, `docker_image`); `CreateKernelSession` cấp đúng `2 × Tesla T4` kèm GGUF/dataset đã gắn, trả ngay `metadata.kernelSessionId` và khi `done=True` trả `response.tokenizedJupyterUrl` tương thích `JupyterClient` (`print(2)` đạt). `CancelKernelSession` thu hồi phiên (idempotent); `GetOperation` chuyển sang trạng thái lỗi hủy (`error` khác rỗng) và cổng Jupyter đóng sau vài giây. `GetKernelSessionStatus` trả 404 trên notebook nháp (`current_version_number=0`) nên không dùng để đối soát phiên tương tác. `GetAcceleratorQuotaStatistics` trả `timedelta` cho hạn mức tuần nhưng `time_reserved` bằng `0` trong ca thử. Có thể chạy `launch.py sdk-check` để kiểm schema offline.

@@ -74,6 +74,8 @@ python examples/qwen35b-llama/check_answer.py
 
 `ready.py` prepares the pinned build and checks the worker on both GPUs. `proxy.py` starts or reuses a **background** proxy on port 8001. The final check should print `Answer: '4'`. The Qwen preset uses a 32,768-token context. In the browser, the default reply limit is 2,048 tokens and 4,096 is available for longer reports. [Local chat](http://127.0.0.1:8001/) · [Qwen operator guide](examples/qwen35b-llama/QWEN35B-KAGGLE.md) · [Build and recovery](examples/qwen35b-llama/BUILD.md)
 
+The Linux desktop launcher can attach a notebook URL, start Qwen, and reopen chat. [Desktop instructions](examples/qwen35b-llama/QWEN35B-KAGGLE.md#launcher-desktop-trên-linux)
+
 ## Call the API
 
 An application on the proxy machine can use **OpenAI-compatible Chat Completions** at `http://127.0.0.1:8001/v1`. It can run in its own environment while the notebook, worker and proxy are running. Use `GET /v1/models` to discover the model ID. The managed Qwen example exposes the alias `qwen-local`.
