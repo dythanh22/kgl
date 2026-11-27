@@ -11,6 +11,9 @@ requires-python = ">=3.10"
 dependencies = []          # stdlib only (own minimal WebSocket client)
 license = { text = "MIT" }
 
+[project.optional-dependencies]
+desktop = ["kagglesdk==0.1.38; python_version >= '3.11'"]
+
 [project.scripts]
 kgl = "kgl.cli:main"
 

@@ -102,7 +102,7 @@ def cmd_status(a, st: Settings, store: SessionStore) -> int:
     out: dict = {"url": redact_url(s.base_url), "kernel_id": s.kernel_id,
                  "headers": redact_headers(s.headers),
                  "connected_for_s": int(time.time() - s.connected_at),
-                 "quota": "unavailable (no official API; not implemented)"}
+                 "quota": "unavailable (not queried by this CLI)"}
     try:
         out["kernel"] = rt.client.get_kernel(s.kernel_id).get("execution_state", "?")
         out["connection"] = "ok"
